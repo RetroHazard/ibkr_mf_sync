@@ -1,6 +1,6 @@
 streamlit
 playwright
 ibflex
-BeautifulSoup
+BeautifulSoup4
 yfinance
 pandas
