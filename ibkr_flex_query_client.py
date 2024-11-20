@@ -2,6 +2,7 @@ from ibflex import client
 import pandas as pd
 import xml.etree.ElementTree as ET
 
+
 def get_ib_flex_report(ib_flex_token, ib_flex_query_id, report_type):
     # Get the IB FLEX report
     response = client.download(ib_flex_token, ib_flex_query_id)
@@ -11,6 +12,7 @@ def get_ib_flex_report(ib_flex_token, ib_flex_query_id, report_type):
     report_element = root.find(f'FlexStatements/FlexStatement/{report_type}')
     # データを格納するためのリストを作成
     data_list = []
+
     def extract_data(element):
         # currencyが"BASE_SUMMARY"の場合は除外する
         if report_type == 'CashReport':
@@ -51,6 +53,7 @@ def get_ib_flex_report(ib_flex_token, ib_flex_query_id, report_type):
 
         # データをリストに追加
         data_list.append(row)
+
     # CashReportCurrency要素を抽出する関数を呼び出す
     if report_type == 'CashReport':
         for report_element in report_element.findall('CashReportCurrency'):
@@ -62,5 +65,5 @@ def get_ib_flex_report(ib_flex_token, ib_flex_query_id, report_type):
         return False
     # リストからDataFrameを作成
     df = pd.DataFrame(data_list)
-    #print(df)
+    # print(df)
     return df
