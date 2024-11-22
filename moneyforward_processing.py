@@ -265,8 +265,10 @@ def reflect_to_mf_equity(page, ib_open_position):
             asset_type_to_input = '14'  # '14':国内株（日本株）
         elif row['currency'] == 'USD':
             asset_type_to_input = '15'  # '15':米国株
-        elif row['currency'] == 'CNY' or row['currency'] == 'HKD':
+        elif row['currency'] in {'CNY', 'HKD'}:
             asset_type_to_input = '16'  # '16':中国株
+        elif row['currency'] in {'CAD', 'GBP', 'EUR', 'AUD', 'NZD', 'SGD'}:
+            asset_type_to_input = '17'  # '17':外国株
         else:
             asset_type_to_input = '55'  # '55':その他外国株
         create_asset_in_mf(page, asset_type_to_input, asset_name_to_input, int(row['positionValue_JPY']),
