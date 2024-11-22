@@ -3,6 +3,8 @@ from playwright.sync_api import sync_playwright
 import ibkr_flex_query_client as ibflex
 import moneyforward_processing as mfproc
 import utils
+from contextlib import suppress
+from playwright.sync_api import sync_playwright, Error as PlaywrightError
 
 
 def main():
@@ -33,13 +35,27 @@ def main():
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         )
         page = context.new_page()
-        # Handle dialog (popup)　表示されるダイアログを自動的に承認（OKボタンを押す）する。
-        page.once("dialog", lambda dialog: dialog.accept())
-        # ---MoneyForward上で手動登録したIBKRのページに遷移---
-        page.goto(MF_IB_INSTITUTION_URL)
-        # ---MoneyForward Me Login---
-        page = mfproc.login(page, MF_EMAIL, MF_PASS)
-        page.wait_for_load_state('networkidle')
+
+        # Set up a dialog handler that can be removed later
+        def dialog_handler(dialog):
+            dialog.accept()
+
+        # Add the dialog handler
+        page.on("dialog", dialog_handler)
+        try:
+            page.goto(MF_IB_INSTITUTION_URL)
+            # ---MoneyForward Me Login---
+            page = mfproc.login(page, MF_EMAIL, MF_PASS)
+            page.wait_for_load_state('networkidle')
+        except PlaywrightError as e:
+            if "Cannot accept dialog which is already handled!" in str(e):
+                print("Dialog was already handled, continuing execution...")
+            else:
+                raise  # Re-raise the exception if it's not the one we're expecting
+        finally:
+            # Remove the dialog handler to prevent multiple handlers
+            page.remove_listener("dialog", dialog_handler)
+
         # ---取得したIB FLEX REPORTをMoneyForward MEに反映する---
         mfproc.reflect_to_mf_cash_deposit(page, ib_cash_report)
         mfproc.reflect_to_mf_equity(page, ib_open_position)
