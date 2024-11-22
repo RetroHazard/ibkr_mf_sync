@@ -228,6 +228,13 @@ def reflect_to_mf_cash_deposit(page, ib_cash_report):
 def reflect_to_mf_equity(page, ib_open_position):
     # ---pageから「預金・現金・暗号資産」の表を取得する。
     mf_equity = get_mf_equity(page)
+    # Check if 'symbol' column exists in both DataFrames
+    if 'symbol' not in mf_equity.columns:
+        print("Warning: 'symbol' column not found in MoneyForward equity data.")
+        mf_equity['symbol'] = None
+    if 'symbol' not in ib_open_position.columns:
+        print("Warning: 'symbol' column not found in IB open positions data.")
+        ib_open_position['symbol'] = None
     # merge(ib_cash_reportとmf_cash_depositを突き合わる、キーはsymbol)
     merged_df = pd.merge(mf_equity, ib_open_position, on='symbol', how='outer').fillna('NONE')
     # 'Action' 列を追加
