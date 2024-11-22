@@ -27,7 +27,7 @@ def main():
         browser = playwright.chromium.launch(headless=True)
         context = browser.new_context(
             # Change user agent 以下のようにuser_agentを偽造しないと、MoneyForwardのログイン画面が表示されないため。
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36"
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         )
         page = context.new_page()
         # Handle dialog (popup)　表示されるダイアログを自動的に承認（OKボタンを押す）する。
