@@ -20,8 +20,11 @@ def main():
     ib_cash_report = ibflex.get_ib_flex_report(IB_FLEX_TOKEN, IB_FLEX_QUERY_FOR_MF_ID, 'CashReport')
     ib_cash_report = utils.add_value_jpy(ib_cash_report, 'endingCash', 'endingCash_JPY')  # 現金残高を日本円に変換
     ib_open_position = ibflex.get_ib_flex_report(IB_FLEX_TOKEN, IB_FLEX_QUERY_FOR_MF_ID, 'OpenPositions')
-    ib_open_position = utils.add_value_jpy(ib_open_position, 'costBasisMoney', 'costBasisMoney_JPY')  # 取得金額を日本円に変換
-    ib_open_position = utils.add_value_jpy(ib_open_position, 'positionValue', 'positionValue_JPY')  # 現在価値を日本円に変換
+    if not ib_open_position.empty:
+        ib_open_position = utils.add_value_jpy(ib_open_position, 'costBasisMoney', 'costBasisMoney_JPY')  # 取得金額を日本円に変換
+        ib_open_position = utils.add_value_jpy(ib_open_position, 'positionValue', 'positionValue_JPY')  # 現在価値を日本円に変換
+    else:
+        print("No open positions found.")
     with sync_playwright() as playwright:
         # Open a new browser context
         browser = playwright.chromium.launch(headless=True)
