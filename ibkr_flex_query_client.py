@@ -14,13 +14,12 @@ def get_ib_flex_report(ib_flex_token, ib_flex_query_id, report_type):
     data_list = []
 
     def extract_data(element):
-        # currencyが"BASE_SUMMARY"の場合は除外する
-        if report_type == 'CashReport':
-            if element.get('currency') == "BASE_SUMMARY":
+        # Filter for both stocks and options
+        if report_type == 'OpenPositions':
+            if element.get('assetCategory') not in ["STK", "OPT"]:
                 return
-        # 株以外のアセットは除外する
-        elif report_type == 'OpenPositions':
-            if element.get('assetCategory') != "STK":
+        elif report_type == 'CashReport':
+            if element.get('currency') == "BASE_SUMMARY":
                 return
         else:
             return False
@@ -45,7 +44,10 @@ def get_ib_flex_report(ib_flex_token, ib_flex_query_id, report_type):
             'side',
             'positionValue',
             'fifoPnlUnrealized',
-            'position'
+            'position',
+            'strike',  # Add this for options
+            'expiry',  # Add this for options
+            'putCall'  # Add this for options
         ]
         for attr in attributes_to_keep:
             if attr in element.attrib:
