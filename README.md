@@ -19,9 +19,6 @@ IBKR MF Syncer is a Python script that synchronizes a stock portfolio from [Inte
     - (2) [Cash Report](https://ibkrguides.com/reportingreference/reportguide/cashreport_default.htm)
        - Do not select any options.
        - Select all items (SELECT ALL).
-    - (3) [Net Asset Value](https://ibkrguides.com/reportingreference/reportguide/netassetvalue_default.htm)
-       - Do not select any options.
-       - Select all items (SELECT ALL).
     - Leave all other settings as default.
     - The query name can be anything.
     - After creation, make a note of that query ID.
