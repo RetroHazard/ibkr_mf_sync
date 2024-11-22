@@ -29,12 +29,13 @@ IBKR MF Syncer is a Python script that synchronizes a stock portfolio from [Inte
 
 ## How to Use
 
-1. First, reflect all the information you noted during preparation in `config.ini` and save it.
-2. Execute playwright to install browser(s)
+1. Rename or Duplicate `config.ini.template` to `config.ini` 
+2. Reflect all the information you noted during preparation in `config.ini` and save it.
+3. Execute playwright to install browser(s)
 ```
 playwright install
 ```
-3. Next, run the script.
+4. Next, run the script.
 ```bash
 python main.py
 ```
