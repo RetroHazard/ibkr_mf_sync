@@ -12,14 +12,15 @@ def get_latest_fx_rate(from_currency='USD', to_currency='JPY'):
     return latest_fx_rate
 
 
-def add_value_jpy(df, calculation_column_name, additonal_column_name):
+def add_value_jpy(df, calculation_column_name, additional_column_name):
+    if df.empty:
+        return df  # Return the empty DataFrame without modifications
     if 'fx_rate_to_JPY' not in df.columns:
-        # dfにFXレートを追加
+        # Add FX rate to the DataFrame
         df['fx_rate_to_JPY'] = df.apply(
             lambda x: float(1) if x['currency'] == 'JPY' else float(get_latest_fx_rate(x['currency'])), axis=1)
-    # dfにValue_JPY列を追加し、円転換した値を代入
-    df[additonal_column_name] = df.apply(lambda x: float(x[calculation_column_name]) * x['fx_rate_to_JPY'], axis=1)
-    # dfのValue_JPY列を整数型に変換
-    df[additonal_column_name] = df[additonal_column_name].astype(int)
-    # print(df)
+    # Add Value_JPY column and convert to JPY
+    df[additional_column_name] = df.apply(lambda x: float(x[calculation_column_name]) * x['fx_rate_to_JPY'], axis=1)
+    # Convert Value_JPY column to integer
+    df[additional_column_name] = df[additional_column_name].astype(int)
     return df
