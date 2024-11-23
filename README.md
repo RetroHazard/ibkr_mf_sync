@@ -10,7 +10,7 @@ IBKR MF Syncer is a Python script that synchronizes a stock portfolio from [Inte
 
 ## Preparation
 - Preparation on the IB Securities side:
-  - [Enable the Flex web service](https://www.ibkrguides.com/brokerportal/flexwebservice.htm#:~:text=To%20enable%20flex%20web%20service,or%20disable%20Flex%20Web%20Service.) in your IB Securities account settings.
+  - [Enable the Flex web service](https://www.interactivebrokers.com/campus/ibkr-api-page/flex-web-service/) in your IB Securities account settings.
   - Once enabled, make a note of the [Current Token](https://www.ibkrguides.com/clientportal/flex3.htm).
   - [Create one Activity Flex query](https://www.ibkrguides.com/clientportal/performanceandstatements/activityflex.htm). Select only the following two sections (1) and (2). Do not select any other sections.
     - (1) [Open Position](https://ibkrguides.com/reportingreference/reportguide/openpositions_default.htm)
