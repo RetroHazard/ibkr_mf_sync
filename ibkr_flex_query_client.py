@@ -15,6 +15,17 @@ def get_ib_flex_report(ib_flex_token, ib_flex_query_id, report_type):
 
     def extract_data(element):
         # Filter for both stocks and options
+            # Supported
+                # STK - Stock
+                # OPT - Option
+            # Not Currently Supported
+                # FUT - Future
+                # CFD - Contract for Difference
+                # WAR - Warrant
+                # SWP - Forex
+                # FND - Mutual Fund
+                # BND - Bond
+                # ICS - Inter-Commodity Spread
         if report_type == 'OpenPositions':
             if element.get('assetCategory') not in ["STK", "OPT"]:
                 return
@@ -45,9 +56,9 @@ def get_ib_flex_report(ib_flex_token, ib_flex_query_id, report_type):
             'positionValue',
             'fifoPnlUnrealized',
             'position',
-            'strike',  # Add this for options
-            'expiry',  # Add this for options
-            'putCall'  # Add this for options
+            'strike',
+            'expiry',
+            'putCall'
         ]
         for attr in attributes_to_keep:
             if attr in element.attrib:
