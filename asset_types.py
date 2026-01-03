@@ -1,14 +1,20 @@
 """
+MoneyForward資産タイプマッピング
 MoneyForward Asset Type Mapping
 
+このモジュールは、手動資産入力フォームから抽出された、
+MoneyForward MEのasset_subclass_id値と人間が読める日本語名の完全なマッピングを含みます。
 This module contains the complete mapping of MoneyForward ME asset_subclass_id values
 to human-readable Japanese names, as extracted from the manual asset entry form.
 
+参照: MoneyForward ME 手動資産入力フォーム
 Reference: MoneyForward ME manual asset entry form
 <select name="user_asset_det[asset_subclass_id]">
 """
 
+# MoneyForward資産サブクラスIDマッピング
 # MoneyForward Asset Subclass ID Mapping
+# MoneyForwardの手動資産入力フォームからのasset_subclass_id値の完全なリスト
 # Complete list of asset_subclass_id values from MoneyForward's manual asset entry form
 ASSET_SUBCLASS_MAP = {
     # 預金・現金・暗号資産 (Deposits, Cash, Cryptocurrency)
@@ -105,19 +111,27 @@ ASSET_SUBCLASS_MAP = {
 
 def get_asset_type_for_currency(currency, asset_category='STK'):
     """
+    通貨と資産カテゴリに基づいて適切なMoneyForward asset_subclass_idを決定します。
     Determine the appropriate MoneyForward asset_subclass_id based on currency and asset category.
 
+    引数:
     Args:
-        currency: Currency code (e.g., 'JPY', 'USD', 'CNY', 'HKD')
-        asset_category: Asset category from IBKR ('STK', 'OPT', 'FUT', etc.)
+        currency: 通貨コード（例: 'JPY', 'USD', 'CNY', 'HKD'）
+                  Currency code (e.g., 'JPY', 'USD', 'CNY', 'HKD')
+        asset_category: IBKRからの資産カテゴリ（'STK', 'OPT', 'FUT'など）
+                        Asset category from IBKR ('STK', 'OPT', 'FUT', etc.)
 
+    戻り値:
     Returns:
+        文字列としてのasset_subclass_id（例: '14', '15', '16', '17', '55'）
         asset_subclass_id as string (e.g., '14', '15', '16', '17', '55')
     """
     if asset_category == 'OPT':
+        # オプションは「指数OP」（インデックスオプション）にマップ
         # Options are mapped to "指数OP" (Index Options)
         return '23'
 
+    # 通貨に基づく株式マッピング
     # Stock mapping based on currency
     if currency == 'JPY':
         return '14'  # 国内株（日本株）
@@ -131,6 +145,7 @@ def get_asset_type_for_currency(currency, asset_category='STK'):
         return '17'  # その他株式（fallback）
 
 
+# よく使用される資産タイプの定数
 # Constants for commonly used asset types
 ASSET_TYPE_CASH_DEPOSIT = '51'  # 保証金・証拠金
 ASSET_TYPE_DOMESTIC_STOCK = '14'  # 国内株
