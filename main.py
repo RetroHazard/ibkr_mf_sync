@@ -1,4 +1,5 @@
 import configparser
+import os
 from playwright.sync_api import sync_playwright
 import ibkr_flex_query_client as ibflex
 import moneyforward_processing as mfproc
@@ -7,17 +8,51 @@ from contextlib import suppress
 from playwright.sync_api import sync_playwright, Error as PlaywrightError
 
 
+def get_config_value(env_var, config, section, key, required=True):
+    """
+    Get configuration value from environment variable first, fallback to config.ini.
+
+    Args:
+        env_var: Environment variable name to check
+        config: ConfigParser object
+        section: Config file section name
+        key: Config file key name
+        required: If True, raise error if value not found in either source
+
+    Returns:
+        Configuration value from environment or config file
+    """
+    # Try environment variable first
+    value = os.environ.get(env_var)
+    if value is not None:
+        return value
+
+    # Fallback to config.ini
+    try:
+        return config.get(section, key)
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        if required:
+            raise ValueError(
+                f"Configuration '{env_var}' not found in environment variables or "
+                f"config.ini [{section}][{key}]. Please set environment variable or update config.ini"
+            )
+        return None
+
+
 def main():
     # ConfigParserオブジェクトを作成してconfig.iniファイルを読み込む
     config = configparser.ConfigParser()
     config.read('config.ini')
-    # configのmoneyforwardセクションからemailとpasswordとIBKRのURLを取得する
-    MF_EMAIL = config.get('moneyforward', 'email')
-    MF_PASS = config.get('moneyforward', 'password')
-    MF_IB_INSTITUTION_URL = config.get('moneyforward', 'ib_institution_url')
-    # configのibkr_flex_queryセクションからtokenとquery_idを取得する
-    IB_FLEX_TOKEN = config.get('ibkr_flex_query', 'token')
-    IB_FLEX_QUERY_FOR_MF_ID = config.get('ibkr_flex_query', 'query_id')
+
+    # 環境変数を優先、config.iniをフォールバックとして設定を取得
+    # Environment variables take precedence, config.ini as fallback
+    MF_EMAIL = get_config_value('MF_EMAIL', config, 'moneyforward', 'email')
+    MF_PASS = get_config_value('MF_PASSWORD', config, 'moneyforward', 'password')
+    MF_IB_INSTITUTION_URL = get_config_value('MF_IB_INSTITUTION_URL', config, 'moneyforward', 'ib_institution_url')
+    IB_FLEX_TOKEN = get_config_value('IBKR_FLEX_TOKEN', config, 'ibkr_flex_query', 'token')
+    # TODO: Add token expiration tracking (see TODO.md)
+    # IBKR Flex tokens expire after 1 year - need to warn users before expiration
+    IB_FLEX_QUERY_FOR_MF_ID = get_config_value('IBKR_FLEX_QUERY_ID', config, 'ibkr_flex_query', 'query_id')
     # ---GET IB FLEX REPORT---
     ib_cash_report = ibflex.get_ib_flex_report(IB_FLEX_TOKEN, IB_FLEX_QUERY_FOR_MF_ID, 'CashReport')
     ib_cash_report = utils.add_value_jpy(ib_cash_report, 'endingCash', 'endingCash_JPY')  # 現金残高を日本円に変換
