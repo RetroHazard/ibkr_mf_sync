@@ -213,6 +213,15 @@ def delete_asset_in_mf(page, table_type, asset_id):
 
 
 def reflect_to_mf_cash_deposit(page, ib_cash_report):
+    """
+    Sync cash deposits from IBKR to MoneyForward.
+
+    CONSERVATIVE DELETION POLICY:
+    - Assets are NEVER automatically deleted
+    - If an asset exists in MF but not in IBKR report, we UPDATE it to 0 value
+    - This preserves historical data while reflecting current state
+    - Manual deletion via delete_all_cash_deposit() still available if needed
+    """
     # ---pageから「預金・現金・暗号資産」の表を取得する。
     mf_cash_deposit = get_mf_cash_deposit(page)
     # merge(ib_cash_reportとmf_cash_depositを突き合わる、キーはcurrency)
@@ -222,8 +231,10 @@ def reflect_to_mf_cash_deposit(page, ib_cash_report):
     # 条件に基づいて 'Action' 列を更新
     merged_df.loc[(merged_df['row_no_in_mf_table'] != 'NONE') & (
             merged_df['value_JPY'] != merged_df['endingCash_JPY']), 'Action'] = 'MODIFY'
+    # CONSERVATIVE: If asset in MF but not in IBKR, UPDATE to 0 instead of DELETE
+    # This preserves historical data while showing current state (no balance)
     merged_df.loc[
-        (merged_df['row_no_in_mf_table'] != 'NONE') & (merged_df['endingCash_JPY'] == 'NONE'), 'Action'] = 'DELETE'
+        (merged_df['row_no_in_mf_table'] != 'NONE') & (merged_df['endingCash_JPY'] == 'NONE'), 'Action'] = 'MODIFY_TO_ZERO'
     merged_df.loc[
         (merged_df['row_no_in_mf_table'] == 'NONE') & (merged_df['endingCash_JPY'] != 'NONE'), 'Action'] = 'ADD'
     # print(merged_df)
@@ -232,10 +243,11 @@ def reflect_to_mf_cash_deposit(page, ib_cash_report):
     for index, row in df_to_modify.iterrows():
         # Only update current value, preserve purchase price to maintain historical data
         modify_asset_in_mf(page, 'table-depo', row['asset_id'], row['currency'], int(row['endingCash_JPY']), update_cost_basis=False)
-    # ---削除を実施---
-    df_to_delete = merged_df[(merged_df['Action'] == 'DELETE')]
-    for index, row in df_to_delete.iterrows():
-        delete_asset_in_mf(page, 'table-depo', row['asset_id'])
+    # ---ゼロに更新 (削除の代わり) - Preserves historical data---
+    df_to_zero = merged_df[(merged_df['Action'] == 'MODIFY_TO_ZERO')]
+    for index, row in df_to_zero.iterrows():
+        print(f"Setting {row['currency']} balance to 0 (not deleting to preserve history)")
+        modify_asset_in_mf(page, 'table-depo', row['asset_id'], row['currency'], 0, update_cost_basis=False)
     # ---追加を実施---
     df_to_add = merged_df[(merged_df['Action'] == 'ADD')]
     for index, row in df_to_add.iterrows():
@@ -245,6 +257,16 @@ def reflect_to_mf_cash_deposit(page, ib_cash_report):
 
 
 def reflect_to_mf_equity(page, ib_open_position):
+    """
+    Sync equity positions (stocks, options) from IBKR to MoneyForward.
+
+    CONSERVATIVE DELETION POLICY:
+    - Assets are NEVER automatically deleted
+    - If a position exists in MF but not in IBKR report, we UPDATE it to 0 value
+    - This preserves historical data for closed positions, expired options, etc.
+    - Allows MoneyForward to show historical performance even after position closure
+    - Manual deletion via delete functions still available if needed
+    """
     # ---pageから「預金・現金・暗号資産」の表を取得する。
     mf_equity = get_mf_equity(page)
     # Check if 'symbol' column exists in both DataFrames
@@ -261,8 +283,11 @@ def reflect_to_mf_equity(page, ib_open_position):
     # 条件に基づいて 'Action' 列を更新
     merged_df.loc[(merged_df['row_no_in_mf_table'] != 'NONE') & (
             merged_df['value_JPY'] != merged_df['positionValue_JPY']), 'Action'] = 'MODIFY'
+    # CONSERVATIVE: If position in MF but not in IBKR, UPDATE to 0 instead of DELETE
+    # This is critical for: closed positions, expired options, sold holdings
+    # Preserves cost basis and historical performance data
     merged_df.loc[
-        (merged_df['row_no_in_mf_table'] != 'NONE') & (merged_df['positionValue_JPY'] == 'NONE'), 'Action'] = 'DELETE'
+        (merged_df['row_no_in_mf_table'] != 'NONE') & (merged_df['positionValue_JPY'] == 'NONE'), 'Action'] = 'MODIFY_TO_ZERO'
     merged_df.loc[
         (merged_df['row_no_in_mf_table'] == 'NONE') & (merged_df['positionValue_JPY'] != 'NONE'), 'Action'] = 'ADD'
     # print(merged_df)
@@ -274,10 +299,14 @@ def reflect_to_mf_equity(page, ib_open_position):
         # This allows MoneyForward to track gains/losses over time correctly
         modify_asset_in_mf(page, 'table-eq', row['asset_id'], asset_name_to_input, int(row['positionValue_JPY']),
                            update_cost_basis=False)
-    # ---削除を実施---
-    df_to_delete = merged_df[(merged_df['Action'] == 'DELETE')]
-    for index, row in df_to_delete.iterrows():
-        delete_asset_in_mf(page, 'table-eq', row['asset_id'])
+    # ---ゼロに更新 (削除の代わり) - Preserves historical data for closed positions---
+    df_to_zero = merged_df[(merged_df['Action'] == 'MODIFY_TO_ZERO')]
+    for index, row in df_to_zero.iterrows():
+        # Keep the original asset name from MoneyForward (preserve position info)
+        # Extract symbol from MF data (format: "SYMBOL|quantity")
+        original_name = str(row['銘柄名']) if '銘柄名' in row and row['銘柄名'] != 'NONE' else row['symbol']
+        print(f"Setting {original_name} position to $0 (not deleting to preserve history)")
+        modify_asset_in_mf(page, 'table-eq', row['asset_id'], original_name, 0, update_cost_basis=False)
     # ---追加を実施---
     df_to_add = merged_df[(merged_df['Action'] == 'ADD')]
     for index, row in df_to_add.iterrows():
