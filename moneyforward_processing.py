@@ -1,6 +1,11 @@
 import pandas as pd
 from bs4 import BeautifulSoup
 from datetime import datetime
+from asset_types import (
+    ASSET_SUBCLASS_MAP,
+    get_asset_type_for_currency,
+    ASSET_TYPE_CASH_DEPOSIT
+)
 
 
 def format_asset_name(row):
@@ -319,14 +324,18 @@ def reflect_to_mf_cash_deposit(page, ib_cash_report):
     # ---追加を実施---
     df_to_add = merged_df[(merged_df['Action'] == 'ADD')]
     for index, row in df_to_add.iterrows():
-        create_asset_in_mf(page, '51', row['currency'], int(row['endingCash_JPY']), '')
-        # '51'とは「保証金・証拠金」のこと
+        create_asset_in_mf(page, ASSET_TYPE_CASH_DEPOSIT, row['currency'], int(row['endingCash_JPY']), '')
     return True
 
 
 def reflect_to_mf_equity(page, ib_open_position):
     """
     Sync equity positions (stocks, options) from IBKR to MoneyForward.
+
+    ASSET TYPE MAPPING:
+    - Stocks (STK): Mapped by currency to appropriate stock category (14/15/16/55/17)
+    - Options (OPT): Mapped to "指数OP" (Index Options, ID: 23)
+    - See ASSET_SUBCLASS_MAP for complete mapping of all MoneyForward asset types
 
     CONSERVATIVE DELETION POLICY:
     - Assets are NEVER automatically deleted
@@ -381,20 +390,9 @@ def reflect_to_mf_equity(page, ib_open_position):
     for index, row in df_to_add.iterrows():
         # Use improved formatting: stocks "AAPL (100)", options "AAPL Jan24 $150C (10)"
         asset_name_to_input = format_asset_name(row)
-        # TODO: Expand asset type mapping to support additional categories (see TODO.md)
-        # Current mapping only supports stocks (STK). Future enhancements needed for:
-        # - Futures (FUT), Bonds (BND), Mutual Funds (FND), Warrants (WAR)
-        # - CFDs, Forex (SWP), Inter-Commodity Spreads (ICS)
-        if row['currency'] == 'JPY':
-            asset_type_to_input = '14'  # '14':国内株（日本株）
-        elif row['currency'] == 'USD':
-            asset_type_to_input = '15'  # '15':米国株
-        elif row['currency'] in {'CNY', 'HKD'}:
-            asset_type_to_input = '16'  # '16':中国株
-        elif row['currency'] in {'CAD', 'GBP', 'EUR', 'AUD', 'NZD', 'SGD'}:
-            asset_type_to_input = '17'  # '17':外国株
-        else:
-            asset_type_to_input = '55'  # '55':その他外国株
+        # Determine asset type based on currency and asset category (STK, OPT, etc.)
+        asset_category = str(row.get('assetCategory', 'STK'))
+        asset_type_to_input = get_asset_type_for_currency(row['currency'], asset_category)
         create_asset_in_mf(page, asset_type_to_input, asset_name_to_input, int(row['positionValue_JPY']),
                            int(row['costBasisMoney_JPY']))
     return True
