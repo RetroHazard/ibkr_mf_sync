@@ -1,6 +1,20 @@
-streamlit
-playwright
-ibflex
-BeautifulSoup4
-yfinance
-pandas
+# Web framework (optional - for Streamlit UI)
+streamlit>=1.52.0
+
+# Browser automation
+playwright>=1.57.0
+
+# IBKR Flex Query API client
+ibflex>=0.15
+
+# HTML parsing
+beautifulsoup4>=4.14.0
+
+# Financial data retrieval
+yfinance>=1.0.0
+
+# Data manipulation
+pandas>=2.2.0,<3.0.0
+
+# Configuration management (built-in, listed for documentation)
+# configparser - included in Python stdlib
