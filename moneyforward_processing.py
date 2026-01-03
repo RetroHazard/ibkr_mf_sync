@@ -129,7 +129,24 @@ def get_asset_id_from_mf_table(page, table_type, row_no_in_mf_table):
     return asset_id
 
 
-def modify_asset_in_mf(page, table_type, asset_id, asset_name, market_value, cost_amount):
+def modify_asset_in_mf(page, table_type, asset_id, asset_name, market_value, cost_amount=None, update_cost_basis=False):
+    """
+    Update an existing asset in MoneyForward.
+
+    Args:
+        page: Playwright page object
+        table_type: Type of table ('table-depo' for cash, 'table-eq' for equity)
+        asset_id: MoneyForward asset ID
+        asset_name: Asset name to display
+        market_value: Current market value (always updated)
+        cost_amount: Purchase price/cost basis (optional)
+        update_cost_basis: If True, update the purchase price field.
+                          If False (default), preserve existing purchase price to maintain history.
+
+    Note: To preserve historical data and allow MoneyForward to track gains/losses over time,
+          we only update the purchase price when explicitly requested (e.g., first time or
+          when user wants to update cost basis). Otherwise, we only update the current value.
+    """
     # Find all delete buttons within the specified table
     modify_buttons = page.query_selector_all(
         f'.table.table-bordered.{table_type} .btn-asset-action[data-toggle="modal"]')
@@ -149,10 +166,11 @@ def modify_asset_in_mf(page, table_type, asset_id, asset_name, market_value, cos
     asset_det_value_textbox_xpath = f'//div[@id="{modal_id}"]//input[@id="user_asset_det_value"]'
     asset_det_value_textbox = page.query_selector(asset_det_value_textbox_xpath)
     asset_det_value_textbox.fill(str(market_value)[:12])
-    # ---購入価格を変更---
-    asset_det_entried_price_textbox_xpath = f'//div[@id="{modal_id}"]//input[@id="user_asset_det_entried_price"]'
-    asset_det_entried_price_textbox = page.query_selector(asset_det_entried_price_textbox_xpath)
-    asset_det_entried_price_textbox.fill(str(cost_amount)[:12])
+    # ---購入価格を変更 (only if explicitly requested to preserve historical data)---
+    if update_cost_basis and cost_amount is not None:
+        asset_det_entried_price_textbox_xpath = f'//div[@id="{modal_id}"]//input[@id="user_asset_det_entried_price"]'
+        asset_det_entried_price_textbox = page.query_selector(asset_det_entried_price_textbox_xpath)
+        asset_det_entried_price_textbox.fill(str(cost_amount)[:12])
     # ---「この内容で登録」ボタンを押す---
     commit_btn_xpath = f'//div[@id="{modal_id}"]//input[@name="commit"]'
     commit_btn = page.query_selector(commit_btn_xpath)
@@ -212,7 +230,8 @@ def reflect_to_mf_cash_deposit(page, ib_cash_report):
     # ---更新を実施---
     df_to_modify = merged_df[(merged_df['Action'] == 'MODIFY')]
     for index, row in df_to_modify.iterrows():
-        modify_asset_in_mf(page, 'table-depo', row['asset_id'], row['currency'], int(row['endingCash_JPY']), '')
+        # Only update current value, preserve purchase price to maintain historical data
+        modify_asset_in_mf(page, 'table-depo', row['asset_id'], row['currency'], int(row['endingCash_JPY']), update_cost_basis=False)
     # ---削除を実施---
     df_to_delete = merged_df[(merged_df['Action'] == 'DELETE')]
     for index, row in df_to_delete.iterrows():
@@ -251,8 +270,10 @@ def reflect_to_mf_equity(page, ib_open_position):
     df_to_modify = merged_df[(merged_df['Action'] == 'MODIFY')]
     for index, row in df_to_modify.iterrows():
         asset_name_to_input = row['symbol'] + "|" + str(row['position'])
+        # Only update current value (positionValue_JPY), preserve cost basis to maintain historical data
+        # This allows MoneyForward to track gains/losses over time correctly
         modify_asset_in_mf(page, 'table-eq', row['asset_id'], asset_name_to_input, int(row['positionValue_JPY']),
-                           int(row['costBasisMoney_JPY']))
+                           update_cost_basis=False)
     # ---削除を実施---
     df_to_delete = merged_df[(merged_df['Action'] == 'DELETE')]
     for index, row in df_to_delete.iterrows():
