@@ -261,6 +261,10 @@ def reflect_to_mf_equity(page, ib_open_position):
     df_to_add = merged_df[(merged_df['Action'] == 'ADD')]
     for index, row in df_to_add.iterrows():
         asset_name_to_input = row['symbol'] + "|" + str(row['position'])
+        # TODO: Expand asset type mapping to support additional categories (see TODO.md)
+        # Current mapping only supports stocks (STK). Future enhancements needed for:
+        # - Futures (FUT), Bonds (BND), Mutual Funds (FND), Warrants (WAR)
+        # - CFDs, Forex (SWP), Inter-Commodity Spreads (ICS)
         if row['currency'] == 'JPY':
             asset_type_to_input = '14'  # '14':国内株（日本株）
         elif row['currency'] == 'USD':

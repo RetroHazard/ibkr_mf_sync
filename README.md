@@ -29,13 +29,71 @@ IBKR MF Syncer is a Python script that synchronizes a stock portfolio from [Inte
 
 ## How to Use
 
-1. Rename or Duplicate `config.ini.template` to `config.ini` 
-2. Reflect all the information you noted during preparation in `config.ini` and save it.
-3. Execute playwright to install browser(s)
+### Configuration
+
+This application supports two configuration methods (in order of precedence):
+
+1. **Environment Variables (Recommended for production/Lambda)**
+2. **config.ini file (Local development fallback)**
+
+#### Option 1: Environment Variables (Recommended)
+
+Set the following environment variables:
+
+```bash
+# Linux/macOS
+export MF_EMAIL="your_email@example.com"
+export MF_PASSWORD="your_password"
+export MF_IB_INSTITUTION_URL="https://moneyforward.com/accounts/show_manual/YOUR_INSTITUTION_ID"
+export IBKR_FLEX_TOKEN="your_token"
+export IBKR_FLEX_QUERY_ID="your_query_id"
+
+# Windows (Command Prompt)
+set MF_EMAIL=your_email@example.com
+set MF_PASSWORD=your_password
+set MF_IB_INSTITUTION_URL=https://moneyforward.com/accounts/show_manual/YOUR_INSTITUTION_ID
+set IBKR_FLEX_TOKEN=your_token
+set IBKR_FLEX_QUERY_ID=your_query_id
+
+# Windows (PowerShell)
+$env:MF_EMAIL="your_email@example.com"
+$env:MF_PASSWORD="your_password"
+$env:MF_IB_INSTITUTION_URL="https://moneyforward.com/accounts/show_manual/YOUR_INSTITUTION_ID"
+$env:IBKR_FLEX_TOKEN="your_token"
+$env:IBKR_FLEX_QUERY_ID="your_query_id"
 ```
+
+Alternatively, copy `.env.template` to `.env` and fill in your credentials (`.env` is gitignored):
+
+```bash
+cp .env.template .env
+# Edit .env with your credentials
+```
+
+**Note**: For AWS Lambda deployment, set these as Lambda environment variables or use AWS Secrets Manager.
+
+#### Option 2: config.ini File (Fallback)
+
+If environment variables are not set, the application will fall back to `config.ini`:
+
+1. Rename or Duplicate `config.ini.template` to `config.ini`
+2. Reflect all the information you noted during preparation in `config.ini` and save it.
+
+**Important**: Never commit `config.ini` or `.env` to version control.
+
+### Installation and Execution
+
+1. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+2. Install Playwright browsers:
+```bash
 playwright install
 ```
-4. Next, run the script.
+
+3. Run the script:
 ```bash
 python main.py
 ```

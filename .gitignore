@@ -1,2 +1,29 @@
-.venv
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Sensitive configuration
 /config.ini
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.Python
+
+# Project-specific documentation (may contain implementation notes)
+/CLAUDE.md
+/TODO.md

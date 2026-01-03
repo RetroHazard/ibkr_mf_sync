@@ -1,4 +1,5 @@
 import streamlit as st
+import os
 from playwright.sync_api import sync_playwright
 import ibkr_flex_query_client as ibflex
 import moneyforward_processing as mfproc
@@ -38,13 +39,17 @@ def main(MF_EMAIL, MF_PASS, IB_FLEX_QUERY_FOR_MF_ID, IB_FLEX_TOKEN, MF_IB_INSTIT
 def app():
     st.title('IBKR to MoneyForward Syncer')
 
-    MF_EMAIL = st.text_input('MF_EMAIL')
-    MF_PASS = st.text_input('MF_PASS', type='password')
-    IB_FLEX_QUERY_FOR_MF_ID = st.text_input('IB_FLEX_QUERY_FOR_MF_ID')
-    IB_FLEX_TOKEN = st.text_input('IB_FLEX_TOKEN', type='password')
-    MF_IB_INSTITUTION_URL = st.text_input('MF_IB_INSTITUTION_URL')
+    # Load default values from environment variables if available
+    MF_EMAIL = st.text_input('MF_EMAIL', value=os.environ.get('MF_EMAIL', ''))
+    MF_PASS = st.text_input('MF_PASSWORD', value=os.environ.get('MF_PASSWORD', ''), type='password')
+    IB_FLEX_QUERY_FOR_MF_ID = st.text_input('IBKR_FLEX_QUERY_ID', value=os.environ.get('IBKR_FLEX_QUERY_ID', ''))
+    IB_FLEX_TOKEN = st.text_input('IBKR_FLEX_TOKEN', value=os.environ.get('IBKR_FLEX_TOKEN', ''), type='password')
+    MF_IB_INSTITUTION_URL = st.text_input('MF_IB_INSTITUTION_URL', value=os.environ.get('MF_IB_INSTITUTION_URL', ''))
 
     if st.button('Sync'):
+        if not all([MF_EMAIL, MF_PASS, IB_FLEX_QUERY_FOR_MF_ID, IB_FLEX_TOKEN, MF_IB_INSTITUTION_URL]):
+            st.error('All fields are required!')
+            return
         main(MF_EMAIL, MF_PASS, IB_FLEX_QUERY_FOR_MF_ID, IB_FLEX_TOKEN, MF_IB_INSTITUTION_URL)
         st.success('Finished!')
 
