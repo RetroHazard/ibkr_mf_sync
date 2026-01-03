@@ -18,15 +18,16 @@ def get_ib_flex_report(ib_flex_token, ib_flex_query_id, report_type):
             # Supported
                 # STK - Stock
                 # OPT - Option
-            # Not Currently Supported
-                # FUT - Future
-                # CFD - Contract for Difference
-                # WAR - Warrant
-                # SWP - Forex
-                # FND - Mutual Fund
-                # BND - Bond
-                # ICS - Inter-Commodity Spread
+            # Not Currently Supported (see TODO.md for implementation roadmap)
+                # TODO: Add support for FUT - Future
+                # TODO: Add support for CFD - Contract for Difference
+                # TODO: Add support for WAR - Warrant
+                # TODO: Add support for SWP - Forex
+                # TODO: Add support for FND - Mutual Fund
+                # TODO: Add support for BND - Bond
+                # TODO: Add support for ICS - Inter-Commodity Spread
         if report_type == 'OpenPositions':
+            # TODO: Expand supported asset categories as new types are implemented
             if element.get('assetCategory') not in ["STK", "OPT"]:
                 return
         elif report_type == 'CashReport':

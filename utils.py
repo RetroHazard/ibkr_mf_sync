@@ -2,6 +2,11 @@ import yfinance as yf
 
 
 def get_latest_fx_rate(from_currency='USD', to_currency='JPY'):
+    # TODO: Improve FX rate accuracy and add error handling (see TODO.md)
+    # - Yahoo Finance rates are approximate
+    # - Add caching to reduce API calls
+    # - Handle API failures gracefully
+    # - Consider alternative FX data sources
     currency_pair = f'{from_currency}{to_currency}=X'
     # USD/JPYのデータを取得
     fx_ticker = yf.Ticker(currency_pair)
