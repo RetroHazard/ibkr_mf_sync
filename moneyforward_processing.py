@@ -1,5 +1,81 @@
 import pandas as pd
 from bs4 import BeautifulSoup
+from datetime import datetime
+from asset_types import (
+    ASSET_SUBCLASS_MAP,
+    get_asset_type_for_currency,
+    ASSET_TYPE_CASH_DEPOSIT
+)
+
+
+def format_asset_name(row):
+    """
+    Format asset name for display in MoneyForward.
+
+    For stocks: "SYMBOL (qty)"
+    For options: "SYMBOL Jan24 $150-C (qty)" or "SYMBOL Jan24 $150-P (qty)"
+
+    The hyphen separator clearly distinguishes Call (C) vs Put (P) contracts,
+    which is critical since both can be held simultaneously for the same strike/date.
+
+    Args:
+        row: DataFrame row containing asset data from IBKR
+
+    Returns:
+        Human-friendly formatted asset name (max 20 chars for MoneyForward)
+    """
+    symbol = str(row['symbol']) if 'symbol' in row and row['symbol'] != 'NONE' else 'UNKNOWN'
+    position = str(row['position']) if 'position' in row and row['position'] != 'NONE' else '0'
+    asset_category = str(row.get('assetCategory', 'STK'))
+
+    if asset_category == 'OPT':
+        # Option format: "AAPL Jan24 $150-C (10)"
+        strike = str(row.get('strike', ''))
+        expiry = str(row.get('expiry', ''))
+        put_call = str(row.get('putCall', ''))
+
+        # Format expiry date: "20240119" -> "Jan24"
+        try:
+            if expiry and expiry != 'NONE' and len(expiry) == 8:
+                expiry_date = datetime.strptime(expiry, '%Y%m%d')
+                month_abbr = expiry_date.strftime('%b')  # Jan, Feb, Mar, etc.
+                year_short = expiry_date.strftime('%y')  # 24, 25, etc.
+                expiry_formatted = f"{month_abbr}{year_short}"
+            else:
+                expiry_formatted = expiry[:6] if expiry != 'NONE' else ''
+        except:
+            expiry_formatted = expiry[:6] if expiry != 'NONE' else ''
+
+        # Format strike: "150.0" -> "$150"
+        try:
+            if strike and strike != 'NONE':
+                strike_num = float(strike)
+                if strike_num == int(strike_num):
+                    strike_formatted = f"${int(strike_num)}"
+                else:
+                    strike_formatted = f"${strike_num:.1f}"
+            else:
+                strike_formatted = ''
+        except:
+            strike_formatted = f"${strike}" if strike != 'NONE' else ''
+
+        # Put/Call indicator: C or P
+        pc_indicator = put_call[0].upper() if put_call and put_call != 'NONE' else ''
+
+        # Build option name: "AAPL Jan24 $150-C (10)" with hyphen separator for clarity
+        option_name = f"{symbol} {expiry_formatted} {strike_formatted}-{pc_indicator} ({position})"
+
+        # Ensure within 20 char limit (MoneyForward constraint)
+        if len(option_name) > 20:
+            # Truncate symbol if needed: "AAPL" -> "APL"
+            symbol_short = symbol[:3] if len(symbol) > 4 else symbol
+            option_name = f"{symbol_short} {expiry_formatted} {strike_formatted}-{pc_indicator} ({position})"
+
+        return option_name[:20]  # Hard limit at 20 chars
+    else:
+        # Stock format: "AAPL (100)"
+        stock_name = f"{symbol} ({position})"
+        return stock_name[:20]
 
 
 def login(page, mf_id, mf_pass):
@@ -251,14 +327,18 @@ def reflect_to_mf_cash_deposit(page, ib_cash_report):
     # ---追加を実施---
     df_to_add = merged_df[(merged_df['Action'] == 'ADD')]
     for index, row in df_to_add.iterrows():
-        create_asset_in_mf(page, '51', row['currency'], int(row['endingCash_JPY']), '')
-        # '51'とは「保証金・証拠金」のこと
+        create_asset_in_mf(page, ASSET_TYPE_CASH_DEPOSIT, row['currency'], int(row['endingCash_JPY']), '')
     return True
 
 
 def reflect_to_mf_equity(page, ib_open_position):
     """
     Sync equity positions (stocks, options) from IBKR to MoneyForward.
+
+    ASSET TYPE MAPPING:
+    - Stocks (STK): Mapped by currency to appropriate stock category (14/15/16/55/17)
+    - Options (OPT): Mapped to "指数OP" (Index Options, ID: 23)
+    - See ASSET_SUBCLASS_MAP for complete mapping of all MoneyForward asset types
 
     CONSERVATIVE DELETION POLICY:
     - Assets are NEVER automatically deleted
@@ -294,7 +374,8 @@ def reflect_to_mf_equity(page, ib_open_position):
     # ---更新を実施---
     df_to_modify = merged_df[(merged_df['Action'] == 'MODIFY')]
     for index, row in df_to_modify.iterrows():
-        asset_name_to_input = row['symbol'] + "|" + str(row['position'])
+        # Use improved formatting: stocks "AAPL (100)", options "AAPL Jan24 $150C (10)"
+        asset_name_to_input = format_asset_name(row)
         # Only update current value (positionValue_JPY), preserve cost basis to maintain historical data
         # This allows MoneyForward to track gains/losses over time correctly
         modify_asset_in_mf(page, 'table-eq', row['asset_id'], asset_name_to_input, int(row['positionValue_JPY']),
@@ -310,21 +391,11 @@ def reflect_to_mf_equity(page, ib_open_position):
     # ---追加を実施---
     df_to_add = merged_df[(merged_df['Action'] == 'ADD')]
     for index, row in df_to_add.iterrows():
-        asset_name_to_input = row['symbol'] + "|" + str(row['position'])
-        # TODO: Expand asset type mapping to support additional categories (see TODO.md)
-        # Current mapping only supports stocks (STK). Future enhancements needed for:
-        # - Futures (FUT), Bonds (BND), Mutual Funds (FND), Warrants (WAR)
-        # - CFDs, Forex (SWP), Inter-Commodity Spreads (ICS)
-        if row['currency'] == 'JPY':
-            asset_type_to_input = '14'  # '14':国内株（日本株）
-        elif row['currency'] == 'USD':
-            asset_type_to_input = '15'  # '15':米国株
-        elif row['currency'] in {'CNY', 'HKD'}:
-            asset_type_to_input = '16'  # '16':中国株
-        elif row['currency'] in {'CAD', 'GBP', 'EUR', 'AUD', 'NZD', 'SGD'}:
-            asset_type_to_input = '17'  # '17':外国株
-        else:
-            asset_type_to_input = '55'  # '55':その他外国株
+        # Use improved formatting: stocks "AAPL (100)", options "AAPL Jan24 $150C (10)"
+        asset_name_to_input = format_asset_name(row)
+        # Determine asset type based on currency and asset category (STK, OPT, etc.)
+        asset_category = str(row.get('assetCategory', 'STK'))
+        asset_type_to_input = get_asset_type_for_currency(row['currency'], asset_category)
         create_asset_in_mf(page, asset_type_to_input, asset_name_to_input, int(row['positionValue_JPY']),
                            int(row['costBasisMoney_JPY']))
     return True
