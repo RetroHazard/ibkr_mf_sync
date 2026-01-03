@@ -1,5 +1,73 @@
 import pandas as pd
 from bs4 import BeautifulSoup
+from datetime import datetime
+
+
+def format_asset_name(row):
+    """
+    Format asset name for display in MoneyForward.
+
+    For stocks: "SYMBOL (qty)"
+    For options: "SYMBOL Jan24 $150C (qty)" or "SYMBOL Jan24 $150P (qty)"
+
+    Args:
+        row: DataFrame row containing asset data from IBKR
+
+    Returns:
+        Human-friendly formatted asset name (max 20 chars for MoneyForward)
+    """
+    symbol = str(row['symbol']) if 'symbol' in row and row['symbol'] != 'NONE' else 'UNKNOWN'
+    position = str(row['position']) if 'position' in row and row['position'] != 'NONE' else '0'
+    asset_category = str(row.get('assetCategory', 'STK'))
+
+    if asset_category == 'OPT':
+        # Option format: "AAPL Jan24 $150C (10)"
+        strike = str(row.get('strike', ''))
+        expiry = str(row.get('expiry', ''))
+        put_call = str(row.get('putCall', ''))
+
+        # Format expiry date: "20240119" -> "Jan24"
+        try:
+            if expiry and expiry != 'NONE' and len(expiry) == 8:
+                expiry_date = datetime.strptime(expiry, '%Y%m%d')
+                month_abbr = expiry_date.strftime('%b')  # Jan, Feb, Mar, etc.
+                year_short = expiry_date.strftime('%y')  # 24, 25, etc.
+                expiry_formatted = f"{month_abbr}{year_short}"
+            else:
+                expiry_formatted = expiry[:6] if expiry != 'NONE' else ''
+        except:
+            expiry_formatted = expiry[:6] if expiry != 'NONE' else ''
+
+        # Format strike: "150.0" -> "$150"
+        try:
+            if strike and strike != 'NONE':
+                strike_num = float(strike)
+                if strike_num == int(strike_num):
+                    strike_formatted = f"${int(strike_num)}"
+                else:
+                    strike_formatted = f"${strike_num:.1f}"
+            else:
+                strike_formatted = ''
+        except:
+            strike_formatted = f"${strike}" if strike != 'NONE' else ''
+
+        # Put/Call indicator: C or P
+        pc_indicator = put_call[0].upper() if put_call and put_call != 'NONE' else ''
+
+        # Build option name: "AAPL Jan24 $150C (10)"
+        option_name = f"{symbol} {expiry_formatted} {strike_formatted}{pc_indicator} ({position})"
+
+        # Ensure within 20 char limit (MoneyForward constraint)
+        if len(option_name) > 20:
+            # Truncate symbol if needed: "AAPL" -> "APL"
+            symbol_short = symbol[:3] if len(symbol) > 4 else symbol
+            option_name = f"{symbol_short} {expiry_formatted} {strike_formatted}{pc_indicator} ({position})"
+
+        return option_name[:20]  # Hard limit at 20 chars
+    else:
+        # Stock format: "AAPL (100)"
+        stock_name = f"{symbol} ({position})"
+        return stock_name[:20]
 
 
 def login(page, mf_id, mf_pass):
@@ -294,7 +362,8 @@ def reflect_to_mf_equity(page, ib_open_position):
     # ---更新を実施---
     df_to_modify = merged_df[(merged_df['Action'] == 'MODIFY')]
     for index, row in df_to_modify.iterrows():
-        asset_name_to_input = row['symbol'] + "|" + str(row['position'])
+        # Use improved formatting: stocks "AAPL (100)", options "AAPL Jan24 $150C (10)"
+        asset_name_to_input = format_asset_name(row)
         # Only update current value (positionValue_JPY), preserve cost basis to maintain historical data
         # This allows MoneyForward to track gains/losses over time correctly
         modify_asset_in_mf(page, 'table-eq', row['asset_id'], asset_name_to_input, int(row['positionValue_JPY']),
@@ -310,7 +379,8 @@ def reflect_to_mf_equity(page, ib_open_position):
     # ---追加を実施---
     df_to_add = merged_df[(merged_df['Action'] == 'ADD')]
     for index, row in df_to_add.iterrows():
-        asset_name_to_input = row['symbol'] + "|" + str(row['position'])
+        # Use improved formatting: stocks "AAPL (100)", options "AAPL Jan24 $150C (10)"
+        asset_name_to_input = format_asset_name(row)
         # TODO: Expand asset type mapping to support additional categories (see TODO.md)
         # Current mapping only supports stocks (STK). Future enhancements needed for:
         # - Futures (FUT), Bonds (BND), Mutual Funds (FND), Warrants (WAR)
