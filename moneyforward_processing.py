@@ -13,7 +13,10 @@ def format_asset_name(row):
     Format asset name for display in MoneyForward.
 
     For stocks: "SYMBOL (qty)"
-    For options: "SYMBOL Jan24 $150C (qty)" or "SYMBOL Jan24 $150P (qty)"
+    For options: "SYMBOL Jan24 $150-C (qty)" or "SYMBOL Jan24 $150-P (qty)"
+
+    The hyphen separator clearly distinguishes Call (C) vs Put (P) contracts,
+    which is critical since both can be held simultaneously for the same strike/date.
 
     Args:
         row: DataFrame row containing asset data from IBKR
@@ -26,7 +29,7 @@ def format_asset_name(row):
     asset_category = str(row.get('assetCategory', 'STK'))
 
     if asset_category == 'OPT':
-        # Option format: "AAPL Jan24 $150C (10)"
+        # Option format: "AAPL Jan24 $150-C (10)"
         strike = str(row.get('strike', ''))
         expiry = str(row.get('expiry', ''))
         put_call = str(row.get('putCall', ''))
@@ -59,14 +62,14 @@ def format_asset_name(row):
         # Put/Call indicator: C or P
         pc_indicator = put_call[0].upper() if put_call and put_call != 'NONE' else ''
 
-        # Build option name: "AAPL Jan24 $150C (10)"
-        option_name = f"{symbol} {expiry_formatted} {strike_formatted}{pc_indicator} ({position})"
+        # Build option name: "AAPL Jan24 $150-C (10)" with hyphen separator for clarity
+        option_name = f"{symbol} {expiry_formatted} {strike_formatted}-{pc_indicator} ({position})"
 
         # Ensure within 20 char limit (MoneyForward constraint)
         if len(option_name) > 20:
             # Truncate symbol if needed: "AAPL" -> "APL"
             symbol_short = symbol[:3] if len(symbol) > 4 else symbol
-            option_name = f"{symbol_short} {expiry_formatted} {strike_formatted}{pc_indicator} ({position})"
+            option_name = f"{symbol_short} {expiry_formatted} {strike_formatted}-{pc_indicator} ({position})"
 
         return option_name[:20]  # Hard limit at 20 chars
     else:
