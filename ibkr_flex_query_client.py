@@ -17,25 +17,22 @@ def get_ib_flex_report(ib_flex_token, ib_flex_query_id, report_type):
     data_list = []
 
     def extract_data(element):
-        # 株式とオプションの両方でフィルタリング
-        # Filter for both stocks and options
-            # サポート対象
-            # Supported
-                # STK - 株式 (Stock)
-                # OPT - オプション (Option)
-            # 現在サポート対象外（実装ロードマップについてはTODO.md参照）
-            # Not Currently Supported (see TODO.md for implementation roadmap)
-                # TODO: FUT - 先物のサポートを追加 (Future)
-                # TODO: CFD - 差金決済取引のサポートを追加 (Contract for Difference)
-                # TODO: WAR - ワラントのサポートを追加 (Warrant)
-                # TODO: SWP - 外国為替のサポートを追加 (Forex)
-                # TODO: FND - 投資信託のサポートを追加 (Mutual Fund)
-                # TODO: BND - 債券のサポートを追加 (Bond)
-                # TODO: ICS - 商品間スプレッドのサポートを追加 (Inter-Commodity Spread)
+        # サポート対象の全資産カテゴリ
+        # All supported asset categories
+            # STK - 株式 (Stock)
+            # OPT - オプション (Option)
+            # FUT - 先物 (Future)
+            # CFD - 差金決済取引 (Contract for Difference)
+            # WAR - ワラント (Warrant)
+            # SWP - 外国為替 (Forex)
+            # FND - 投資信託 (Mutual Fund)
+            # BND - 債券 (Bond)
+            # ICS - 商品間スプレッド (Inter-Commodity Spread)
         if report_type == 'OpenPositions':
-            # TODO: 新しいタイプが実装されたらサポート対象資産カテゴリを拡張
-            # TODO: Expand supported asset categories as new types are implemented
-            if element.get('assetCategory') not in ["STK", "OPT"]:
+            # サポート対象の資産カテゴリリスト
+            # List of supported asset categories
+            supported_categories = ["STK", "OPT", "FUT", "CFD", "WAR", "SWP", "FND", "BND", "ICS"]
+            if element.get('assetCategory') not in supported_categories:
                 return
         elif report_type == 'CashReport':
             if element.get('currency') == "BASE_SUMMARY":
