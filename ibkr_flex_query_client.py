@@ -45,24 +45,22 @@ def get_ib_flex_report(ib_flex_token, ib_flex_query_id, report_type):
         # 必要な属性のみ辞書に追加
         # Add only required attributes to dictionary
         attributes_to_keep = [
-            'accountId',
+            # 共通属性 / Common attributes
             'currency',
-            'fromDate',
-            'toDate',
-            'reportDate',
-            'endingCash',
             'assetCategory',
-            'subCategory',
+
+            # 現金報告用 / For CashReport
+            'endingCash',
+
+            # 保有ポジション用 / For OpenPositions
             'symbol',
-            'description',
-            'listingExchange',
-            'openPrice',
-            'costBasisPrice',
-            'costBasisMoney',
-            'side',
-            'positionValue',
-            'fifoPnlUnrealized',
             'position',
+            'positionValue',
+            'costBasisMoney',
+            'subCategory',
+            'description',  # BND用の利率抽出に使用 / Used for coupon extraction in BND
+
+            # オプション固有属性 / Option-specific attributes
             'strike',
             'expiry',
             'putCall'
