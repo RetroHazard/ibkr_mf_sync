@@ -10,30 +10,63 @@ from asset_types import (
 
 def format_asset_name(row):
     """
-    Format asset name for display in MoneyForward.
+    IBKRの資産データに基づいてMoneyForward表示用の資産名をフォーマットします。
+    Format asset name for display in MoneyForward based on IBKR asset data.
 
-    For stocks: "SYMBOL (qty)"
-    For options: "SYMBOL Jan24 $150-C (qty)" or "SYMBOL Jan24 $150-P (qty)"
+    フォーマット例:
+    Formatting examples:
+        株式 (STK): "AAPL (100)"
+        Stocks: "AAPL (100)"
 
-    The hyphen separator clearly distinguishes Call (C) vs Put (P) contracts,
-    which is critical since both can be held simultaneously for the same strike/date.
+        オプション (OPT): "AAPL Jan24 $150-C (10)" または "AAPL Jan24 $150-P (10)"
+        Options: "AAPL Jan24 $150-C (10)" or "AAPL Jan24 $150-P (10)"
 
+        先物 (FUT): "ES Mar24 (5)"
+        Futures: "ES Mar24 (5)"
+
+        CFD: "SPX500 (10)"
+
+        ワラント (WAR): "TSLAW (1000)"
+        Warrants: "TSLAW (1000)"
+
+        外国為替 (SWP/CASH): "EUR.USD (100k)"
+        Forex: "EUR.USD (100k)"
+
+        投資信託 (FND): "VTSAX (50)"
+        Mutual Funds: "VTSAX (50)"
+
+        債券 (BND): "US10Y 2.5% (10)"
+        Bonds: "US10Y 2.5% (10)"
+
+    ハイフン区切り文字はCall (C) vs Put (P)契約を明確に区別します。
+    The hyphen separator clearly distinguishes Call (C) vs Put (P) contracts.
+    同じ行使価格/期日で両方が同時に保有される可能性があるため重要です。
+    This is critical since both can be held simultaneously for the same strike/date.
+
+    引数:
     Args:
-        row: DataFrame row containing asset data from IBKR
+        row: IBKRからの資産データを含むDataFrame行
+             DataFrame row containing asset data from IBKR
 
+    戻り値:
     Returns:
+        人間が読みやすい形式の資産名（MoneyForward制約により最大20文字）
         Human-friendly formatted asset name (max 20 chars for MoneyForward)
     """
     symbol = str(row['symbol']) if 'symbol' in row and row['symbol'] != 'NONE' else 'UNKNOWN'
     position = str(row['position']) if 'position' in row and row['position'] != 'NONE' else '0'
     asset_category = str(row.get('assetCategory', 'STK'))
 
+    # オプション (OPT)
+    # Options
     if asset_category == 'OPT':
+        # オプション形式: "AAPL Jan24 $150-C (10)"
         # Option format: "AAPL Jan24 $150-C (10)"
         strike = str(row.get('strike', ''))
         expiry = str(row.get('expiry', ''))
         put_call = str(row.get('putCall', ''))
 
+        # 有効期限フォーマット: "20240119" -> "Jan24"
         # Format expiry date: "20240119" -> "Jan24"
         try:
             if expiry and expiry != 'NONE' and len(expiry) == 8:
@@ -46,6 +79,7 @@ def format_asset_name(row):
         except:
             expiry_formatted = expiry[:6] if expiry != 'NONE' else ''
 
+        # 行使価格フォーマット: "150.0" -> "$150"
         # Format strike: "150.0" -> "$150"
         try:
             if strike and strike != 'NONE':
@@ -59,20 +93,126 @@ def format_asset_name(row):
         except:
             strike_formatted = f"${strike}" if strike != 'NONE' else ''
 
+        # Put/Call インジケーター: C または P
         # Put/Call indicator: C or P
         pc_indicator = put_call[0].upper() if put_call and put_call != 'NONE' else ''
 
+        # オプション名を構築: 明確さのためハイフン区切りで "AAPL Jan24 $150-C (10)"
         # Build option name: "AAPL Jan24 $150-C (10)" with hyphen separator for clarity
         option_name = f"{symbol} {expiry_formatted} {strike_formatted}-{pc_indicator} ({position})"
 
+        # 20文字制限内に収める（MoneyForward制約）
         # Ensure within 20 char limit (MoneyForward constraint)
         if len(option_name) > 20:
+            # 必要に応じてシンボルを切り詰める: "AAPL" -> "APL"
             # Truncate symbol if needed: "AAPL" -> "APL"
             symbol_short = symbol[:3] if len(symbol) > 4 else symbol
             option_name = f"{symbol_short} {expiry_formatted} {strike_formatted}-{pc_indicator} ({position})"
 
-        return option_name[:20]  # Hard limit at 20 chars
+        return option_name[:20]  # 20文字でハードリミット / Hard limit at 20 chars
+
+    # 先物 (FUT)
+    # Futures
+    elif asset_category == 'FUT':
+        # 先物形式: "ES Mar24 (5)"
+        # Futures format: "ES Mar24 (5)"
+        expiry = str(row.get('expiry', ''))
+
+        # 有効期限フォーマット: "20240315" -> "Mar24"
+        # Format expiry date: "20240315" -> "Mar24"
+        try:
+            if expiry and expiry != 'NONE' and len(expiry) == 8:
+                expiry_date = datetime.strptime(expiry, '%Y%m%d')
+                month_abbr = expiry_date.strftime('%b')
+                year_short = expiry_date.strftime('%y')
+                expiry_formatted = f"{month_abbr}{year_short}"
+            else:
+                expiry_formatted = ''
+        except:
+            expiry_formatted = ''
+
+        if expiry_formatted:
+            future_name = f"{symbol} {expiry_formatted} ({position})"
+        else:
+            future_name = f"{symbol} ({position})"
+
+        return future_name[:20]
+
+    # CFD（差金決済取引）
+    # CFD (Contract for Difference)
+    elif asset_category == 'CFD':
+        # CFD形式: "SPX500 (10)"
+        # CFD format: "SPX500 (10)"
+        cfd_name = f"{symbol} ({position})"
+        return cfd_name[:20]
+
+    # ワラント (WAR)
+    # Warrants
+    elif asset_category == 'WAR':
+        # ワラント形式: "TSLAW (1000)"
+        # Warrant format: "TSLAW (1000)"
+        warrant_name = f"{symbol} ({position})"
+        return warrant_name[:20]
+
+    # 外国為替 (SWP/CASH)
+    # Forex (Swaps/FX)
+    elif asset_category == 'SWP' or asset_category == 'CASH':
+        # 外国為替形式: "EUR.USD (100k)"
+        # Forex format: "EUR.USD (100k)"
+        # ポジションをk（千単位）でフォーマット
+        # Format position in k (thousands)
+        try:
+            pos_num = float(position)
+            if abs(pos_num) >= 1000:
+                pos_formatted = f"{int(pos_num/1000)}k"
+            else:
+                pos_formatted = position
+        except:
+            pos_formatted = position
+
+        forex_name = f"{symbol} ({pos_formatted})"
+        return forex_name[:20]
+
+    # 投資信託 (FND)
+    # Mutual Funds
+    elif asset_category == 'FND':
+        # 投資信託形式: "VTSAX (50)"
+        # Fund format: "VTSAX (50)"
+        fund_name = f"{symbol} ({position})"
+        return fund_name[:20]
+
+    # 債券 (BND)
+    # Bonds
+    elif asset_category == 'BND':
+        # 債券形式: "US10Y 2.5% (10)"
+        # Bond format: "US10Y 2.5% (10)"
+        # 説明フィールドから利率を抽出しようと試みる
+        # Try to extract coupon rate from description field
+        description = str(row.get('description', ''))
+        coupon = ''
+
+        # 説明から利率パターンを検索（例: "2.5%"）
+        # Search for coupon pattern in description (e.g., "2.5%")
+        import re
+        coupon_match = re.search(r'(\d+\.?\d*)\s*%', description)
+        if coupon_match:
+            coupon = f" {coupon_match.group(1)}%"
+
+        bond_name = f"{symbol}{coupon} ({position})"
+        return bond_name[:20]
+
+    # 商品間スプレッド (ICS)
+    # Inter-Commodity Spreads
+    elif asset_category == 'ICS':
+        # ICS形式: "GC-SI (2)"
+        # ICS format: "GC-SI (2)"
+        ics_name = f"{symbol} ({position})"
+        return ics_name[:20]
+
+    # 株式およびその他（デフォルト）
+    # Stocks and other (default)
     else:
+        # 株式形式: "AAPL (100)"
         # Stock format: "AAPL (100)"
         stock_name = f"{symbol} ({position})"
         return stock_name[:20]
@@ -390,19 +530,44 @@ def reflect_to_mf_cash_deposit(page, ib_cash_report):
 
 def reflect_to_mf_equity(page, ib_open_position):
     """
-    Sync equity positions (stocks, options) from IBKR to MoneyForward.
+    IBKRからMoneyForwardにポジション（株式、オプション、先物、CFD、ワラント、外国為替、投資信託、債券など）を同期します。
+    Sync positions (stocks, options, futures, CFDs, warrants, forex, funds, bonds, etc.) from IBKR to MoneyForward.
 
+    資産タイプマッピング:
     ASSET TYPE MAPPING:
-    - Stocks (STK): Mapped by currency to appropriate stock category (14/15/16/55/17)
-    - Options (OPT): Mapped to "指数OP" (Index Options, ID: 23)
-    - See ASSET_SUBCLASS_MAP for complete mapping of all MoneyForward asset types
+        - 株式 (STK): 通貨別の適切な株式カテゴリにマッピング (14/15/16/55/17)
+          Stocks: Mapped by currency to appropriate stock category (14/15/16/55/17)
+        - オプション (OPT): "指数OP" (Index Options, ID: 23)にマッピング
+          Options: Mapped to "指数OP" (Index Options, ID: 23)
+        - 先物 (FUT): "指数先物" (22) または "商品先物" (26)にマッピング
+          Futures: Mapped to "指数先物" (22) or "商品先物" (26)
+        - CFD: "CFD" (24)にマッピング
+          CFD: Mapped to "CFD" (24)
+        - ワラント (WAR): 通貨ベースの株式分類にマッピング (14/15/16/55)
+          Warrants: Mapped to currency-based stock classification (14/15/16/55)
+        - 外国為替 (SWP/CASH): "店頭FX" (18)にマッピング
+          Forex: Mapped to "店頭FX" (18)
+        - 投資信託 (FND): "投資信託" (12) または "外国投資信託" (52)にマッピング
+          Mutual Funds: Mapped to "投資信託" (12) or "外国投資信託" (52)
+        - 債券 (BND): "国債" (7) / "社債" (8) / "外債" (9) / "その他債券" (11)にマッピング
+          Bonds: Mapped to "国債" (7) / "社債" (8) / "外債" (9) / "その他債券" (11)
+        - 商品間スプレッド (ICS): "商品先物" (26)にマッピング
+          Inter-Commodity Spreads: Mapped to "商品先物" (26)
+        - 完全なマッピングについてはASSET_SUBCLASS_MAPを参照
+          See ASSET_SUBCLASS_MAP for complete mapping of all MoneyForward asset types
 
+    保守的な削除ポリシー:
     CONSERVATIVE DELETION POLICY:
-    - Assets are NEVER automatically deleted
-    - If a position exists in MF but not in IBKR report, we UPDATE it to 0 value
-    - This preserves historical data for closed positions, expired options, etc.
-    - Allows MoneyForward to show historical performance even after position closure
-    - Manual deletion via delete functions still available if needed
+        - 資産は自動的に削除されることはありません
+          Assets are NEVER automatically deleted
+        - MFにポジションがあるがIBKRレポートにない場合、0に更新します
+          If a position exists in MF but not in IBKR report, we UPDATE it to 0 value
+        - クローズポジション、期限切れオプションなどの履歴データを保持します
+          This preserves historical data for closed positions, expired options, etc.
+        - MoneyForwardがポジション終了後も履歴パフォーマンスを表示できるようにします
+          Allows MoneyForward to show historical performance even after position closure
+        - 必要に応じて削除機能で手動削除が可能です
+          Manual deletion via delete functions still available if needed
     """
     # ---pageから株式ポジションの表を取得---
     # ---Get equity positions table from page---
@@ -464,13 +629,14 @@ def reflect_to_mf_equity(page, ib_open_position):
     # ---Execute additions---
     df_to_add = merged_df[(merged_df['Action'] == 'ADD')]
     for index, row in df_to_add.iterrows():
-        # 改善されたフォーマットを使用: 株式 "AAPL (100)", オプション "AAPL Jan24 $150-C (10)"
-        # Use improved formatting: stocks "AAPL (100)", options "AAPL Jan24 $150-C (10)"
+        # 改善されたフォーマットを使用: 株式 "AAPL (100)", オプション "AAPL Jan24 $150-C (10)", 先物 "ES Mar24 (5)"など
+        # Use improved formatting: stocks "AAPL (100)", options "AAPL Jan24 $150-C (10)", futures "ES Mar24 (5)", etc.
         asset_name_to_input = format_asset_name(row)
-        # 通貨と資産カテゴリ（STK、OPTなど）に基づいて資産タイプを決定
-        # Determine asset type based on currency and asset category (STK, OPT, etc.)
+        # 通貨、資産カテゴリ（STK、OPT、FUT、CFD、WAR、SWP、FND、BND、ICSなど）、サブカテゴリに基づいて資産タイプを決定
+        # Determine asset type based on currency, asset category (STK, OPT, FUT, CFD, WAR, SWP, FND, BND, ICS, etc.), and subcategory
         asset_category = str(row.get('assetCategory', 'STK'))
-        asset_type_to_input = get_asset_type_for_currency(row['currency'], asset_category)
+        subcategory = str(row.get('subCategory', None)) if 'subCategory' in row and row['subCategory'] != 'NONE' else None
+        asset_type_to_input = get_asset_type_for_currency(row['currency'], asset_category, subcategory)
         create_asset_in_mf(page, asset_type_to_input, asset_name_to_input, int(row['positionValue_JPY']),
                            int(row['costBasisMoney_JPY']))
     return True
