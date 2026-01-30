@@ -1,8 +1,8 @@
 # Web framework (optional - for Streamlit UI)
-streamlit>=1.52.0
+streamlit>=1.30.0
 
 # Browser automation
-playwright>=1.57.0
+playwright>=1.40.0
 
 # IBKR Flex Query API client
 ibflex>=0.15
@@ -18,3 +18,6 @@ pandas>=2.2.0,<3.0.0
 
 # Configuration management (built-in, listed for documentation)
 # configparser - included in Python stdlib
+
+# Environment variable management
+python-dotenv>=1.0.0

@@ -1,11 +1,49 @@
 import pandas as pd
 from bs4 import BeautifulSoup
 from datetime import datetime
+import logging
 from asset_types import (
     ASSET_SUBCLASS_MAP,
     get_asset_type_for_currency,
     ASSET_TYPE_CASH_DEPOSIT
 )
+
+# ロギング設定 / Configure logging
+logger = logging.getLogger(__name__)
+
+
+class SecureCredential:
+    """
+    機密情報をラップして、ログやスタックトレースでの露出を防ぐクラス。
+    Wrapper class to protect sensitive credentials from exposure in logs and stack traces.
+
+    注意: これは完全なセキュリティソリューションではなく、偶発的な露出を防ぐためのものです。
+    Note: This is not a complete security solution, but helps prevent accidental exposure.
+
+    セキュリティのベストプラクティス:
+    Security best practices:
+    - 本番環境では環境変数を使用 / Use environment variables in production
+    - 可能な限りシークレット管理システムを使用 / Use secret management systems when possible
+    - 使用後は機密データをクリア / Clear sensitive data after use
+    """
+    def __init__(self, value):
+        self._value = value
+
+    def get(self):
+        """機密値を取得 / Get the sensitive value"""
+        return self._value
+
+    def clear(self):
+        """機密値をメモリからクリア / Clear the sensitive value from memory"""
+        self._value = None
+
+    def __repr__(self):
+        """機密値を隠す / Hide sensitive value"""
+        return "<SecureCredential: ***REDACTED***>"
+
+    def __str__(self):
+        """機密値を隠す / Hide sensitive value"""
+        return "***REDACTED***"
 
 
 def format_asset_name(row):
@@ -76,7 +114,8 @@ def format_asset_name(row):
                 expiry_formatted = f"{month_abbr}{year_short}"
             else:
                 expiry_formatted = expiry[:6] if expiry != 'NONE' else ''
-        except:
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.warning(f"Failed to parse expiry date '{expiry}': {e}")
             expiry_formatted = expiry[:6] if expiry != 'NONE' else ''
 
         # 行使価格フォーマット: "150.0" -> "$150"
@@ -90,7 +129,8 @@ def format_asset_name(row):
                     strike_formatted = f"${strike_num:.1f}"
             else:
                 strike_formatted = ''
-        except:
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to parse strike price '{strike}': {e}")
             strike_formatted = f"${strike}" if strike != 'NONE' else ''
 
         # Put/Call インジケーター: C または P
@@ -128,7 +168,8 @@ def format_asset_name(row):
                 expiry_formatted = f"{month_abbr}{year_short}"
             else:
                 expiry_formatted = ''
-        except:
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.warning(f"Failed to parse futures expiry date '{expiry}': {e}")
             expiry_formatted = ''
 
         if expiry_formatted:
@@ -167,7 +208,8 @@ def format_asset_name(row):
                 pos_formatted = f"{int(pos_num/1000)}k"
             else:
                 pos_formatted = position
-        except:
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to parse forex position '{position}': {e}")
             pos_formatted = position
 
         forex_name = f"{symbol} ({pos_formatted})"
@@ -218,25 +260,117 @@ def format_asset_name(row):
         return stock_name[:20]
 
 
+def requires_2fa_verification(page):
+    """
+    Check if the page is showing an email OTP / 2FA verification prompt.
+
+    Args:
+        page: Playwright page object
+
+    Returns:
+        bool: True if verification is required, False otherwise
+    """
+    try:
+        url = page.url
+        # MoneyForwardの2FA/OTP確認ページのURLパターンをチェック
+        # Check for MoneyForward 2FA/OTP verification page URL patterns
+        if 'email_otp' in url or 'verification' in url.lower() or 'authenticate' in url.lower():
+            logger.info(f"2FA verification page detected: {url}")
+            return True
+
+        # ページタイトルもチェック
+        # Also check page title
+        title = page.title()
+        if '認証' in title or 'verification' in title.lower() or 'authenticate' in title.lower():
+            logger.info(f"2FA verification page detected by title: {title}")
+            return True
+
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking for 2FA requirement: {e}")
+        return False
+
+
 def login(page, mf_id, mf_pass):
-    # メールアドレスフィールドに入力
-    # Fill in the email field
-    page.fill('#mfid_user\\[email\\]', mf_id)
-    # 送信ボタンをクリック
-    # Click the submit button
-    page.click('#submitto')
-    # ページ遷移を待機 (オプション、ページによって異なる)
-    # Wait for navigation (optional, depending on the page)
-    # page.wait_for_load_state('networkidle')
-    # パスワードフィールドに入力
-    # Fill in the password field
-    page.fill('#mfid_user\\[password\\]', mf_pass)
-    # サインインボタンをクリック
-    # Click the submit (sign in) button
-    page.click('#submitto')
-    # ページインスタンスを返す
-    # Return the page instance
-    return page
+    """
+    MoneyForward MEにログイン / Login to MoneyForward ME
+
+    Args:
+        page: Playwright page object
+        mf_id: メールアドレス（文字列またはSecureCredentialオブジェクト）
+               Email address (string or SecureCredential object)
+        mf_pass: パスワード（文字列またはSecureCredentialオブジェクト）
+                 Password (string or SecureCredential object)
+
+    セキュリティ注意事項:
+    Security note:
+        プレーンテキストのパスワードは、スタックトレースやログに表示される可能性があります。
+        Plain text passwords may be visible in stack traces or logs.
+        本番環境では、環境変数とSecureCredentialラッパーの使用を推奨します。
+        For production use, recommend using environment variables and SecureCredential wrapper.
+
+    Returns:
+        tuple: (page, needs_2fa) - page object and boolean indicating if 2FA is required
+    """
+    # SecureCredentialオブジェクトから値を取得、または文字列をそのまま使用
+    # Extract value from SecureCredential object, or use string as-is
+    email = mf_id.get() if isinstance(mf_id, SecureCredential) else mf_id
+    password = mf_pass.get() if isinstance(mf_pass, SecureCredential) else mf_pass
+
+    try:
+        # 既にログインしているかチェック（ログインフォームが存在しない場合はスキップ）
+        # Check if already logged in (skip if login form doesn't exist)
+        login_form = page.query_selector('#mfid_user\\[email\\]')
+        if login_form is None:
+            logger.info("Already logged in (using saved session)")
+            return page, False
+
+        # メールアドレスフィールドに入力
+        # Fill in the email field
+        page.fill('#mfid_user\\[email\\]', email)
+        # 送信ボタンをクリック
+        # Click the submit button
+        page.click('#submitto')
+        # ページ遷移を待機
+        # Wait for navigation
+        page.wait_for_timeout(2000)
+
+        # パスワードフィールドに入力
+        # Fill in the password field
+        page.fill('#mfid_user\\[password\\]', password)
+        # サインインボタンをクリック
+        # Click the submit (sign in) button
+        page.click('#submitto')
+
+        # ログイン後のページ読み込みを待機（短いタイムアウト）
+        # Wait for page load after login (short timeout)
+        page.wait_for_load_state('networkidle', timeout=10000)
+
+        # 2FA検証が必要かチェック
+        # Check if 2FA verification is required
+        needs_2fa = requires_2fa_verification(page)
+
+        if needs_2fa:
+            logger.warning("2FA/Email verification required - user interaction needed")
+            return page, True
+
+        logger.info("Login successful (no 2FA required)")
+        return page, False
+
+    except Exception as e:
+        # 例外メッセージに機密情報が含まれないようにする
+        # Ensure exception message doesn't contain sensitive information
+        logger.error(f"Login error: {e}")
+        # タイムアウトの場合は2FAが必要な可能性がある
+        # If timeout, 2FA might be required
+        if 'Timeout' in str(e):
+            return page, True
+        raise RuntimeError("Failed to login to MoneyForward ME") from e
+    finally:
+        # ローカル変数から機密情報をクリア（完全ではないが、最善の努力）
+        # Clear sensitive data from local variables (not complete, but best effort)
+        email = None
+        password = None
 
 
 def delete_all_cash_deposit(page):
@@ -300,7 +434,9 @@ def get_mf_equity(page):
     # Rename '銘柄コード' column to 'symbol'
     if '銘柄コード' in df.columns:
         df = df.rename(columns={'銘柄コード': 'symbol'})
-        df['symbol'] = df['銘柄名'].str.split('|').str[0]
+        # '銘柄名'から'|'の前の部分を取得し、ポジション数量 (xx.x) を削除
+        # Extract part before '|' from stock name, and remove position quantity (xx.x)
+        df['symbol'] = df['銘柄名'].str.split('|').str[0].str.replace(r'\s*\([\d.]+\)\s*$', '', regex=True).str.strip()
     else:
         # dfに"symbol"列を追加
         # Add "symbol" column to df
@@ -359,18 +495,35 @@ def get_data_from_mf_table(page, table_type):
 
 
 def get_asset_id_from_mf_table(page, table_type, row_no_in_mf_table):
+    # XPath injection prevention: validate table_type
+    # XPath インジェクション防止: table_type を検証
+    if table_type not in ['table-depo', 'table-eq']:
+        raise ValueError(f"Invalid table type: {table_type}")
+
+    # XPath injection prevention: validate row_no_in_mf_table is numeric
+    # XPath インジェクション防止: row_no_in_mf_table が数値であることを検証
+    try:
+        row_num = int(row_no_in_mf_table)
+        if row_num < 1:
+            raise ValueError(f"Row number must be positive: {row_no_in_mf_table}")
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Invalid row number (must be numeric): {row_no_in_mf_table}") from e
+
     if table_type == 'table-depo':
         change_btn_column_no = 3
     elif table_type == 'table-eq':
         change_btn_column_no = 11
-    else:
-        return False
-    element_xpath = '//*[@class="table table-bordered {}"]/tbody/tr[{}]/td[{}]/a'.format(table_type, row_no_in_mf_table,
+
+    element_xpath = '//*[@class="table table-bordered {}"]/tbody/tr[{}]/td[{}]/a'.format(table_type, row_num,
                                                                                          change_btn_column_no)
     element = page.query_selector(element_xpath)
+    if element is None:
+        raise RuntimeError(f"Element not found at row {row_no_in_mf_table} in {table_type}. Page structure may have changed.")
     # href属性から目的の文字列を取得し、これをasset_idとする
     # Get target string from href attribute and use it as asset_id
     href_attribute = element.get_attribute('href')
+    if href_attribute is None:
+        raise RuntimeError(f"Element at row {row_no_in_mf_table} in {table_type} has no href attribute.")
     asset_id = href_attribute.replace('#modal_asset', '')
     return asset_id
 
@@ -393,6 +546,15 @@ def modify_asset_in_mf(page, table_type, asset_id, asset_name, market_value, cos
           we only update the purchase price when explicitly requested (e.g., first time or
           when user wants to update cost basis). Otherwise, we only update the current value.
     """
+    # XPath injection prevention: validate asset_id
+    # XPath インジェクション防止: asset_id を検証
+    if not asset_id or not isinstance(asset_id, str):
+        raise ValueError(f"Invalid asset_id: {asset_id}")
+    # Validate asset_id contains only alphanumeric characters and underscores
+    # asset_id が英数字とアンダースコアのみを含むことを検証
+    if not asset_id.replace('_', '').replace('-', '').isalnum():
+        raise ValueError(f"Invalid asset_id format (contains special characters): {asset_id}")
+
     # 指定されたテーブル内のすべての変更ボタンを検索
     # Find all modify buttons within the specified table
     modify_buttons = page.query_selector_all(
@@ -413,6 +575,8 @@ def modify_asset_in_mf(page, table_type, asset_id, asset_name, market_value, cos
     # ---Change asset name---
     asset_det_name_textbox_xpath = f'//div[@id="{modal_id}"]//input[@id="user_asset_det_name"]'
     asset_det_name_textbox = page.query_selector(asset_det_name_textbox_xpath)
+    if asset_det_name_textbox is None:
+        raise RuntimeError(f"Asset name input not found for asset_id {asset_id}. Modal may not have loaded properly.")
     # 20文字までしか入力できないため、最初の20文字を入力
     # Input first 20 characters (maximum allowed is 20 characters)
     asset_det_name_textbox.fill(str(asset_name)[:20])
@@ -420,17 +584,23 @@ def modify_asset_in_mf(page, table_type, asset_id, asset_name, market_value, cos
     # ---Change current value---
     asset_det_value_textbox_xpath = f'//div[@id="{modal_id}"]//input[@id="user_asset_det_value"]'
     asset_det_value_textbox = page.query_selector(asset_det_value_textbox_xpath)
+    if asset_det_value_textbox is None:
+        raise RuntimeError(f"Asset value input not found for asset_id {asset_id}. Modal may not have loaded properly.")
     asset_det_value_textbox.fill(str(market_value)[:12])
     # ---購入価格を変更（履歴データ保持のため明示的にリクエストされた場合のみ）---
     # ---Change purchase price (only if explicitly requested to preserve historical data)---
     if update_cost_basis and cost_amount is not None:
         asset_det_entried_price_textbox_xpath = f'//div[@id="{modal_id}"]//input[@id="user_asset_det_entried_price"]'
         asset_det_entried_price_textbox = page.query_selector(asset_det_entried_price_textbox_xpath)
+        if asset_det_entried_price_textbox is None:
+            raise RuntimeError(f"Purchase price input not found for asset_id {asset_id}. Modal may not have loaded properly.")
         asset_det_entried_price_textbox.fill(str(cost_amount)[:12])
     # ---「この内容で登録」ボタンを押す---
     # ---Click the "Register with this content" button---
     commit_btn_xpath = f'//div[@id="{modal_id}"]//input[@name="commit"]'
     commit_btn = page.query_selector(commit_btn_xpath)
+    if commit_btn is None:
+        raise RuntimeError(f"Commit button not found for asset_id {asset_id}. Modal may not have loaded properly.")
     commit_btn.click()
     # ---モーダルが消えるまで待機---
     # ---Wait until the modal disappears---
@@ -439,16 +609,123 @@ def modify_asset_in_mf(page, table_type, asset_id, asset_name, market_value, cos
     return True
 
 
-def create_asset_in_mf(page, asset_type, asset_name, market_value, cost_amount):
-    page.get_by_role("button", name="手入力で資産を追加").click()
-    page.get_by_role("combobox", name="資産の種類").select_option(str(asset_type))
-    page.get_by_label("資産の名称").fill(str(asset_name)[:20])
-    page.get_by_label("現在の価値").fill(str(market_value)[:12])
-    page.get_by_label("購入価格").fill(str(cost_amount)[:12])
-    page.get_by_role("button", name="この内容で登録する").click()
-    page.wait_for_timeout(2000)
-    page.wait_for_load_state('networkidle')
-    return True
+def create_asset_in_mf(page, asset_type, asset_name, market_value, cost_amount, purchase_date=None):
+    """
+    Create a new asset in MoneyForward.
+
+    Args:
+        page: Playwright page object
+        asset_type: MoneyForward asset type ID
+        asset_name: Asset name
+        market_value: Current market value
+        cost_amount: Purchase price/cost basis
+        purchase_date: Optional purchase date in 'YYYY-MM-DD' format (from IBKR openDateTime)
+    """
+    try:
+        # デバッグ: 現在のURLとページタイトルをログ出力
+        # Debug: Log current URL and page title
+        logger.info(f"Current URL: {page.url}")
+        logger.info(f"Page title: {page.title()}")
+
+        add_button = page.get_by_role("button", name="手入力で資産を追加")
+        if add_button is None:
+            raise RuntimeError("Add asset button not found. Page structure may have changed.")
+        add_button.click()
+
+        asset_type_combo = page.get_by_role("combobox", name="資産の種類")
+        if asset_type_combo is None:
+            raise RuntimeError("Asset type combobox not found. Page structure may have changed.")
+        asset_type_combo.select_option(str(asset_type))
+
+        name_field = page.get_by_label("資産の名称")
+        if name_field is None:
+            raise RuntimeError("Asset name field not found. Page structure may have changed.")
+        name_field.fill(str(asset_name)[:20])
+
+        value_field = page.get_by_label("現在の価値")
+        if value_field is None:
+            raise RuntimeError("Current value field not found. Page structure may have changed.")
+        value_field.fill(str(market_value)[:12])
+
+        cost_field = page.get_by_label("購入価格")
+        if cost_field is None:
+            raise RuntimeError("Purchase price field not found. Page structure may have changed.")
+        cost_field.fill(str(cost_amount)[:12])
+
+        # 購入日フィールドが存在する場合は設定
+        # Set purchase date field if it exists and date is provided
+        if purchase_date:
+            try:
+                from datetime import date
+                # MoneyForwardの購入日フィールドにアクセス (ID: user_asset_det_entried_at)
+                # Access MoneyForward purchase date field (ID: user_asset_det_entried_at)
+                date_field = page.query_selector('#user_asset_det_entried_at')
+                if date_field:
+                    # YYYY/MM/DD形式に変換 (MoneyForwardは通常この形式を期待)
+                    # Convert to YYYY/MM/DD format (MoneyForward typically expects this format)
+                    formatted_date = purchase_date.replace('-', '/')
+                    today = date.today().isoformat().replace('-', '/')
+
+                    # JavaScriptで値を直接設定し、必要なイベントをトリガー
+                    # Set value directly with JavaScript and trigger necessary events
+                    logger.info(f"Setting purchase date: {formatted_date}")
+                    page.evaluate(f'''() => {{
+                        const field = document.querySelector('#user_asset_det_entried_at');
+                        if (field) {{
+                            field.value = '{formatted_date}';
+                            // 各種イベントをトリガーしてフォームに値の変更を通知
+                            // Trigger events to notify form of value change
+                            field.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                            field.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                            field.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+                        }}
+                    }}''')
+
+                    # 日付値をコミットするため、Tabキーでフォーカスを移動
+                    # Press Tab to move focus and commit the date value
+                    # カレンダーウィジェットは明示的なフォーカス変更が必要
+                    # Calendar widgets require explicit focus change to commit
+                    date_field.press('Tab')
+                    page.wait_for_timeout(500)  # 値のコミットを待つ / Wait for value to commit
+
+                    # 値が正しく設定されたか確認
+                    # Verify the value was set correctly
+                    committed_value = date_field.input_value()
+                    logger.info(f"Purchase date set to: {formatted_date}, committed value in field: '{committed_value}'")
+                else:
+                    logger.warning("Purchase date field (#user_asset_det_entried_at) not found in form")
+            except Exception as e:
+                # 購入日フィールドが存在しない場合はスキップ
+                # Skip if purchase date field doesn't exist
+                logger.warning(f"Error setting purchase date: {e}")
+
+        submit_button = page.get_by_role("button", name="この内容で登録する")
+        if submit_button is None:
+            raise RuntimeError("Submit button not found. Page structure may have changed.")
+        logger.info("Clicking submit button to create asset...")
+
+        # JavaScriptクリックを使用してハングを回避
+        # Use JavaScript click to avoid hanging
+        try:
+            submit_button.evaluate('el => el.click()')
+            logger.info("Submit button clicked via JavaScript")
+        except:
+            # フォールバック: 通常のクリック
+            # Fallback to normal click
+            submit_button.click()
+            logger.info("Submit button clicked via Playwright")
+
+        page.wait_for_timeout(2000)
+        try:
+            page.wait_for_load_state('networkidle', timeout=10000)  # 10秒タイムアウト / 10 second timeout
+            logger.info("Asset created successfully")
+        except Exception as e:
+            logger.warning(f"Page didn't reach networkidle state after submit, but continuing: {e}")
+            # フォーム送信後にページが完全に落ち着かない場合でも続行
+            # Continue even if page doesn't fully settle after form submission
+        return True
+    except Exception as e:
+        raise RuntimeError(f"Failed to create asset in MoneyForward: {e}") from e
 
 
 def delete_asset_in_mf(page, table_type, asset_id):
@@ -488,9 +765,42 @@ def reflect_to_mf_cash_deposit(page, ib_cash_report):
     # ---pageから「預金・現金・暗号資産」の表を取得---
     # ---Get "Deposits, Cash, Cryptocurrency" table from page---
     mf_cash_deposit = get_mf_cash_deposit(page)
+
+    # デバッグ: MoneyForwardにある通貨を表示
+    # Debug: Show currencies in MoneyForward
+    logger.info(f"MoneyForward cash deposits: {mf_cash_deposit['currency'].tolist() if not mf_cash_deposit.empty else 'None'}")
+    logger.info(f"IBKR cash report: {ib_cash_report['currency'].tolist() if not ib_cash_report.empty else 'None'}")
+
+    # 重複チェック: MoneyForwardに同じ通貨の複数のエントリがある場合は警告
+    # Duplicate check: Warn if MoneyForward has multiple entries for the same currency
+    if not mf_cash_deposit.empty:
+        duplicates = mf_cash_deposit[mf_cash_deposit.duplicated(subset=['currency'], keep=False)]
+        if not duplicates.empty:
+            logger.warning(f"WARNING: MoneyForward has duplicate currency entries: {duplicates['currency'].tolist()}")
+            logger.warning("Only the first occurrence will be updated. Please manually remove duplicates.")
+            # 最初の出現のみを保持（重複を削除）
+            # Keep only first occurrence (remove duplicates)
+            mf_cash_deposit = mf_cash_deposit.drop_duplicates(subset=['currency'], keep='first')
+            logger.info(f"After deduplication: {mf_cash_deposit['currency'].tolist()}")
+
     # ib_cash_reportとmf_cash_depositをマージ（キー: currency）
     # Merge ib_cash_report and mf_cash_deposit (key: currency)
-    merged_df = pd.merge(mf_cash_deposit, ib_cash_report, on='currency', how='outer').fillna('NONE')
+    merged_df = pd.merge(mf_cash_deposit, ib_cash_report, on='currency', how='outer')
+
+    # デバッグ: マージ結果を表示
+    # Debug: Show merge results
+    logger.info(f"Merged data:\n{merged_df[['currency', 'row_no_in_mf_table', 'value_JPY', 'endingCash_JPY']].to_string()}")
+    # 非数値列のみ'NONE'で埋める / Fill only non-numeric columns with 'NONE'
+    # 数値列は数値のままにする / Keep numeric columns as numeric
+    string_columns = ['currency', 'row_no_in_mf_table', 'asset_id']
+    for col in string_columns:
+        if col in merged_df.columns:
+            merged_df[col] = merged_df[col].fillna('NONE')
+    # 数値列は0で埋める（後でNoneチェックで検出可能） / Fill numeric columns with NaN (detectable via None check)
+    numeric_columns = ['value_JPY', 'endingCash_JPY']
+    for col in numeric_columns:
+        if col in merged_df.columns:
+            merged_df[col] = pd.to_numeric(merged_df[col], errors='coerce')
     # 'Action'列を追加（初期値: 'NONE'）
     # Add 'Action' column (initial value: 'NONE')
     merged_df['Action'] = 'NONE'
@@ -503,9 +813,9 @@ def reflect_to_mf_cash_deposit(page, ib_cash_report):
     # 履歴データを保持しつつ現在の状態（残高なし）を反映
     # This preserves historical data while showing current state (no balance)
     merged_df.loc[
-        (merged_df['row_no_in_mf_table'] != 'NONE') & (merged_df['endingCash_JPY'] == 'NONE'), 'Action'] = 'MODIFY_TO_ZERO'
+        (merged_df['row_no_in_mf_table'] != 'NONE') & (merged_df['endingCash_JPY'].isna()), 'Action'] = 'MODIFY_TO_ZERO'
     merged_df.loc[
-        (merged_df['row_no_in_mf_table'] == 'NONE') & (merged_df['endingCash_JPY'] != 'NONE'), 'Action'] = 'ADD'
+        (merged_df['row_no_in_mf_table'] == 'NONE') & (merged_df['endingCash_JPY'].notna()), 'Action'] = 'ADD'
     # print(merged_df)
     # ---更新を実施---
     # ---Execute updates---
@@ -580,26 +890,70 @@ def reflect_to_mf_equity(page, ib_open_position):
     if 'symbol' not in ib_open_position.columns:
         print("Warning: 'symbol' column not found in IB open positions data.")
         ib_open_position['symbol'] = None
+
+    # デバッグ: シンボルの内容を表示
+    # Debug: Show symbol contents
+    logger.info(f"MoneyForward equity symbols: {mf_equity['symbol'].tolist() if not mf_equity.empty else 'None'}")
+    logger.info(f"IBKR positions symbols: {ib_open_position['symbol'].tolist() if not ib_open_position.empty else 'None'}")
+
+    # 重複チェック: MoneyForwardに同じシンボルの複数のエントリがある場合は警告
+    # Duplicate check: Warn if MoneyForward has multiple entries for the same symbol
+    if not mf_equity.empty and 'symbol' in mf_equity.columns:
+        duplicates = mf_equity[mf_equity.duplicated(subset=['symbol'], keep=False)]
+        if not duplicates.empty:
+            logger.warning(f"WARNING: MoneyForward has duplicate symbol entries: {duplicates['symbol'].tolist()}")
+            logger.warning("Only the first occurrence will be updated. Please manually remove duplicates.")
+            # 最初の出現のみを保持（重複を削除）
+            # Keep only first occurrence (remove duplicates)
+            mf_equity = mf_equity.drop_duplicates(subset=['symbol'], keep='first')
+
     # ib_open_positionとmf_equityをマージ（キー: symbol）
     # Merge ib_open_position and mf_equity (key: symbol)
-    merged_df = pd.merge(mf_equity, ib_open_position, on='symbol', how='outer').fillna('NONE')
+    merged_df = pd.merge(mf_equity, ib_open_position, on='symbol', how='outer')
+
+    # デバッグ: マージ結果を表示
+    # Debug: Show merge results
+    # 存在する列のみ表示 / Only show columns that exist
+    display_cols = ['symbol', 'row_no_in_mf_table']
+    if 'value_JPY' in merged_df.columns:
+        display_cols.append('value_JPY')
+    if 'positionValue_JPY' in merged_df.columns:
+        display_cols.append('positionValue_JPY')
+    logger.info(f"Merged equity data:\n{merged_df[display_cols].to_string()}")
+    # 非数値列のみ'NONE'で埋める / Fill only non-numeric columns with 'NONE'
+    # 数値列は数値のままにする / Keep numeric columns as numeric
+    string_columns = ['symbol', 'row_no_in_mf_table', 'asset_id', '銘柄名', 'currency', 'assetCategory',
+                      'subCategory', 'description', 'strike', 'expiry', 'putCall']
+    for col in string_columns:
+        if col in merged_df.columns:
+            merged_df[col] = merged_df[col].fillna('NONE')
+    # 数値列は数値型を維持 / Keep numeric columns as numeric type
+    # IBKRポジションがない場合、positionValue_JPY列を追加（NaN値）
+    # Add positionValue_JPY column with NaN if no IBKR positions
+    if 'positionValue_JPY' not in merged_df.columns:
+        import numpy as np
+        merged_df['positionValue_JPY'] = np.nan
+
+    numeric_columns = ['value_JPY', 'positionValue_JPY', 'costBasisMoney_JPY', 'position']
+    for col in numeric_columns:
+        if col in merged_df.columns:
+            merged_df[col] = pd.to_numeric(merged_df[col], errors='coerce')
     # 'Action'列を追加（初期値: 'NONE'）
     # Add 'Action' column (initial value: 'NONE')
     merged_df['Action'] = 'NONE'
     # 条件に基づいて'Action'列を更新
     # Update 'Action' column based on conditions
-    merged_df.loc[(merged_df['row_no_in_mf_table'] != 'NONE') & (
-            merged_df['value_JPY'] != merged_df['positionValue_JPY']), 'Action'] = 'MODIFY'
-    # 保守的アプローチ: MFにポジションがあるがIBKRにない場合、削除せず0に更新
-    # CONSERVATIVE: If position in MF but not in IBKR, UPDATE to 0 instead of DELETE
-    # クローズポジション、期限切れオプション、売却済み保有株に重要
-    # This is critical for: closed positions, expired options, sold holdings
-    # コストベースと履歴パフォーマンスデータを保持
-    # Preserves cost basis and historical performance data
+    if 'positionValue_JPY' in merged_df.columns:
+        merged_df.loc[(merged_df['row_no_in_mf_table'] != 'NONE') & (
+                merged_df['value_JPY'] != merged_df['positionValue_JPY']), 'Action'] = 'MODIFY'
+    # MFにポジションがあるがIBKRにない場合、削除
+    # If position exists in MF but not in IBKR, DELETE it
+    # クローズポジション、期限切れオプション、売却済み保有株に対応
+    # Handles closed positions, expired options, sold holdings
     merged_df.loc[
-        (merged_df['row_no_in_mf_table'] != 'NONE') & (merged_df['positionValue_JPY'] == 'NONE'), 'Action'] = 'MODIFY_TO_ZERO'
+        (merged_df['row_no_in_mf_table'] != 'NONE') & (merged_df['positionValue_JPY'].isna()), 'Action'] = 'DELETE'
     merged_df.loc[
-        (merged_df['row_no_in_mf_table'] == 'NONE') & (merged_df['positionValue_JPY'] != 'NONE'), 'Action'] = 'ADD'
+        (merged_df['row_no_in_mf_table'] == 'NONE') & (merged_df['positionValue_JPY'].notna()), 'Action'] = 'ADD'
     # print(merged_df)
     # ---更新を実施---
     # ---Execute updates---
@@ -614,17 +968,15 @@ def reflect_to_mf_equity(page, ib_open_position):
         # This allows MoneyForward to track gains/losses over time correctly
         modify_asset_in_mf(page, 'table-eq', row['asset_id'], asset_name_to_input, int(row['positionValue_JPY']),
                            update_cost_basis=False)
-    # ---ゼロに更新（削除の代わり）- クローズポジションの履歴データを保持---
-    # ---Update to zero (instead of delete) - Preserves historical data for closed positions---
-    df_to_zero = merged_df[(merged_df['Action'] == 'MODIFY_TO_ZERO')]
-    for index, row in df_to_zero.iterrows():
-        # MoneyForwardから元の資産名を保持（ポジション情報を保存）
-        # Keep the original asset name from MoneyForward (preserve position info)
-        # MFデータからシンボルを抽出（フォーマット: "SYMBOL|quantity"）
-        # Extract symbol from MF data (format: "SYMBOL|quantity")
+    # ---削除を実施 - IBKRに存在しないポジションを削除---
+    # ---Execute deletions - Remove positions that don't exist in IBKR---
+    df_to_delete = merged_df[(merged_df['Action'] == 'DELETE')]
+    for index, row in df_to_delete.iterrows():
+        # MoneyForwardから元の資産名を取得
+        # Get original asset name from MoneyForward
         original_name = str(row['銘柄名']) if '銘柄名' in row and row['銘柄名'] != 'NONE' else row['symbol']
-        print(f"Setting {original_name} position to $0 (not deleting to preserve history)")
-        modify_asset_in_mf(page, 'table-eq', row['asset_id'], original_name, 0, update_cost_basis=False)
+        logger.info(f"Deleting closed position: {original_name}")
+        delete_asset_in_mf(page, 'table-eq', row['asset_id'])
     # ---追加を実施---
     # ---Execute additions---
     df_to_add = merged_df[(merged_df['Action'] == 'ADD')]
@@ -637,6 +989,27 @@ def reflect_to_mf_equity(page, ib_open_position):
         asset_category = str(row.get('assetCategory', 'STK'))
         subcategory = str(row.get('subCategory', None)) if 'subCategory' in row and row['subCategory'] != 'NONE' else None
         asset_type_to_input = get_asset_type_for_currency(row['currency'], asset_category, subcategory)
+
+        # 購入日を取得してフォーマット (openDateTime: "2024-01-15;12:30:00" -> "2024-01-15")
+        # Get and format purchase date (openDateTime: "2024-01-15;12:30:00" -> "2024-01-15")
+        purchase_date = None
+        if 'openDateTime' in row and row['openDateTime'] != 'NONE' and str(row['openDateTime']).strip():
+            try:
+                # IBKRのopenDateTimeは "YYYY-MM-DD;HH:MM:SS" 形式
+                # IBKR openDateTime is in "YYYY-MM-DD;HH:MM:SS" format
+                open_datetime_str = str(row['openDateTime'])
+                purchase_date = open_datetime_str.split(';')[0]  # 日付部分のみ取得 / Get date part only
+                logger.info(f"Using IBKR openDateTime for {row['symbol']}: {purchase_date}")
+            except Exception as e:
+                logger.warning(f"Failed to parse openDateTime '{row.get('openDateTime')}': {e}")
+
+        # openDateTimeが利用できない場合は、現在の日付にフォールバック
+        # Fallback to current date if openDateTime is not available
+        if not purchase_date:
+            from datetime import date
+            purchase_date = date.today().isoformat()  # YYYY-MM-DD形式 / YYYY-MM-DD format
+            logger.info(f"openDateTime not available for {row['symbol']}, using current date: {purchase_date}")
+
         create_asset_in_mf(page, asset_type_to_input, asset_name_to_input, int(row['positionValue_JPY']),
-                           int(row['costBasisMoney_JPY']))
+                           int(row['costBasisMoney_JPY']), purchase_date)
     return True
