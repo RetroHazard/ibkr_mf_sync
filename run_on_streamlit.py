@@ -30,24 +30,27 @@ def main(MF_EMAIL, MF_PASS, IB_FLEX_QUERY_FOR_MF_ID, IB_FLEX_TOKEN, MF_IB_INSTIT
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36"
         )
         page = context.new_page()
-        # ダイアログ（ポップアップ）を処理 - 表示されるダイアログを自動的に承認（OKボタンを押す）
-        # Handle dialog (popup) - Automatically accept displayed dialogs (click OK button)
-        page.once("dialog", lambda dialog: dialog.accept())
-        # ---MoneyForward Meログイン---
-        # ---MoneyForward Me Login---
-        page = mfproc.login(page, MF_EMAIL, MF_PASS)
-        # ---MoneyForward上で手動登録したIBKRのページに遷移---
-        # ---Navigate to manually registered IBKR page on MoneyForward---
-        page.goto(MF_IB_INSTITUTION_URL)
-        page.wait_for_load_state('networkidle')
-        # ---取得したIB FLEXレポートをMoneyForward MEに反映---
-        # ---Reflect retrieved IB FLEX report to MoneyForward ME---
-        mfproc.reflect_to_mf_cash_deposit(page, ib_cash_report)
-        mfproc.reflect_to_mf_equity(page, ib_open_position)
-        # ブラウザコンテキストを閉じる
-        # Close browser context
-        context.close()
-        browser.close()
+
+        try:
+            # ダイアログ（ポップアップ）を処理 - 表示されるダイアログを自動的に承認（OKボタンを押す）
+            # Handle dialog (popup) - Automatically accept displayed dialogs (click OK button)
+            page.once("dialog", lambda dialog: dialog.accept())
+            # ---MoneyForward Meログイン---
+            # ---MoneyForward Me Login---
+            page = mfproc.login(page, MF_EMAIL, MF_PASS)
+            # ---MoneyForward上で手動登録したIBKRのページに遷移---
+            # ---Navigate to manually registered IBKR page on MoneyForward---
+            page.goto(MF_IB_INSTITUTION_URL)
+            page.wait_for_load_state('networkidle')
+            # ---取得したIB FLEXレポートをMoneyForward MEに反映---
+            # ---Reflect retrieved IB FLEX report to MoneyForward ME---
+            mfproc.reflect_to_mf_cash_deposit(page, ib_cash_report)
+            mfproc.reflect_to_mf_equity(page, ib_open_position)
+        finally:
+            # ブラウザコンテキストを閉じる（例外が発生しても常に実行）
+            # Close browser context (always executed even if exception occurs)
+            context.close()
+            browser.close()
 
 
 def app():

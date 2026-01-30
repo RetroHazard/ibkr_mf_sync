@@ -27,3 +27,6 @@ build/
 # Project-specific documentation (may contain implementation notes)
 /CLAUDE.md
 /TODO.md
+.browser_session.json
+.cache/
+.context/
