@@ -315,6 +315,11 @@ def main():
                 # Remove the dialog handler to prevent multiple handlers
                 page.remove_listener("dialog", dialog_handler)
 
+            # ---ログイン後、IBKRの口座ページに遷移---
+            # ---After login, navigate to IBKR institution page---
+            page.goto(MF_IB_INSTITUTION_URL)
+            page.wait_for_load_state('networkidle')
+
             # ---取得したIB FLEXレポートをMoneyForward MEに反映---
             # ---Reflect retrieved IB FLEX report to MoneyForward ME---
             mfproc.reflect_to_mf_cash_deposit(page, ib_cash_report)
