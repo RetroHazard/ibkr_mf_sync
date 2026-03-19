@@ -46,218 +46,159 @@ class SecureCredential:
         return "***REDACTED***"
 
 
+def get_underlying_symbol(row):
+    """
+    IBKRデータからクリーンな原資産ティッカーを抽出します。
+    Extract the clean underlying ticker symbol from IBKR data.
+
+    株式 (STK) の場合、シンボルはすでに原資産ティッカー (例: "QSI")。
+    For stocks (STK), the symbol is already the underlying ticker (e.g., "QSI").
+
+    オプション (OPT) の場合、シンボルはOCCコード (例: "PNC   260213P00227500")
+    で、最初の6文字がパディングされた原資産ティッカーです。
+    For options (OPT), the symbol is an OCC code (e.g., "PNC   260213P00227500")
+    where the first 6 chars are the padded underlying ticker.
+    """
+    symbol = str(row.get('symbol', 'UNKNOWN'))
+    asset_category = str(row.get('assetCategory', 'STK'))
+
+    if asset_category == 'OPT' and len(symbol) > 6:
+        # OCC形式: 6文字パディング原資産 + 日付 + タイプ + 行使価格
+        # OCC format: 6-char padded underlying + date + type + strike
+        underlying = symbol[:6].strip()
+        return underlying if underlying else symbol
+
+    return symbol
+
+
+def get_position_key(row):
+    """
+    ポジションのユニークなマージキーを生成します（ポジション数量に依存しない）。
+    Generate a unique merge key for a position, independent of position count.
+
+    キー形式 / Key formats:
+        STK: "QSI"
+        OPT: "PNC260213 P227.5" (原資産+YYMMDD+スペース+P/C+行使価格)
+        FUT: "ES 250321"
+        BND: "US10Y 2.5%"
+        その他: 原資産シンボル / Others: underlying symbol
+    """
+    underlying = get_underlying_symbol(row)
+    asset_category = str(row.get('assetCategory', 'STK'))
+
+    if asset_category == 'OPT':
+        strike = str(row.get('strike', ''))
+        expiry = str(row.get('expiry', ''))
+        put_call = str(row.get('putCall', ''))
+
+        # 有効期限フォーマット: "20260213" -> "260213"
+        # Format expiry: "20260213" -> "260213"
+        if expiry and expiry != 'NONE' and len(expiry) == 8:
+            expiry_formatted = expiry[2:]  # YYYYMMDD -> YYMMDD
+        else:
+            expiry_formatted = expiry if expiry != 'NONE' else ''
+
+        # 行使価格フォーマット: "227.5" -> "227.5", "5.0" -> "5"
+        # Format strike: "227.5" -> "227.5", "5.0" -> "5"
+        strike_formatted = ''
+        try:
+            if strike and strike != 'NONE':
+                strike_num = float(strike)
+                if strike_num == int(strike_num):
+                    strike_formatted = str(int(strike_num))
+                else:
+                    strike_formatted = f"{strike_num:g}"
+            else:
+                strike_formatted = ''
+        except (ValueError, TypeError):
+            strike_formatted = strike if strike != 'NONE' else ''
+
+        pc_indicator = put_call[0].upper() if put_call and put_call != 'NONE' else ''
+
+        # キー形式: "PNC260213 P227.5"
+        # Key format: "PNC260213 P227.5"
+        key = f"{underlying}{expiry_formatted} {pc_indicator}{strike_formatted}"
+        return key[:20]
+
+    elif asset_category == 'FUT':
+        expiry = str(row.get('expiry', ''))
+        if expiry and expiry != 'NONE' and len(expiry) == 8:
+            expiry_formatted = expiry[2:]  # YYYYMMDD -> YYMMDD
+        else:
+            expiry_formatted = ''
+
+        if expiry_formatted:
+            key = f"{underlying} {expiry_formatted}"
+        else:
+            key = underlying
+        return key[:20]
+
+    elif asset_category == 'BND':
+        import re
+        description = str(row.get('description', ''))
+        coupon_match = re.search(r'(\d+\.?\d*)\s*%', description)
+        coupon = f" {coupon_match.group(1)}%" if coupon_match else ''
+        key = f"{underlying}{coupon}"
+        return key[:20]
+
+    else:
+        return underlying[:20]
+
+
 def format_asset_name(row):
     """
     IBKRの資産データに基づいてMoneyForward表示用の資産名をフォーマットします。
     Format asset name for display in MoneyForward based on IBKR asset data.
 
-    フォーマット例:
-    Formatting examples:
-        株式 (STK): "AAPL (100)"
-        Stocks: "AAPL (100)"
+    get_position_key()でアイデンティティ部分を生成し、20文字以内に収まる場合はポジション数を付加します。
+    Uses get_position_key() for the identity part, appends position count if it fits within 20 chars.
 
-        オプション (OPT): "AAPL Jan24 $150-C (10)" または "AAPL Jan24 $150-P (10)"
-        Options: "AAPL Jan24 $150-C (10)" or "AAPL Jan24 $150-P (10)"
-
-        先物 (FUT): "ES Mar24 (5)"
-        Futures: "ES Mar24 (5)"
-
-        CFD: "SPX500 (10)"
-
-        ワラント (WAR): "TSLAW (1000)"
-        Warrants: "TSLAW (1000)"
-
+    フォーマット例 / Formatting examples:
+        オプション (OPT): "PNC260213 P227.5-1"  ({symbol}{YYMMDD} {PC}{strike}-{pos})
+        株式 (STK): "QSI (500)"
+        先物 (FUT): "ES 250321 (5)"
         外国為替 (SWP/CASH): "EUR.USD (100k)"
-        Forex: "EUR.USD (100k)"
 
-        投資信託 (FND): "VTSAX (50)"
-        Mutual Funds: "VTSAX (50)"
-
-        債券 (BND): "US10Y 2.5% (10)"
-        Bonds: "US10Y 2.5% (10)"
-
-    ハイフン区切り文字はCall (C) vs Put (P)契約を明確に区別します。
-    The hyphen separator clearly distinguishes Call (C) vs Put (P) contracts.
-    同じ行使価格/期日で両方が同時に保有される可能性があるため重要です。
-    This is critical since both can be held simultaneously for the same strike/date.
-
-    引数:
-    Args:
+    引数 / Args:
         row: IBKRからの資産データを含むDataFrame行
              DataFrame row containing asset data from IBKR
 
-    戻り値:
-    Returns:
-        人間が読みやすい形式の資産名（MoneyForward制約により最大20文字）
-        Human-friendly formatted asset name (max 20 chars for MoneyForward)
+    戻り値 / Returns:
+        資産名（MoneyForward制約により最大20文字）
+        Asset name (max 20 chars for MoneyForward)
     """
-    symbol = str(row['symbol']) if 'symbol' in row and row['symbol'] != 'NONE' else 'UNKNOWN'
-    position = str(row['position']) if 'position' in row and row['position'] != 'NONE' else '0'
+    position = str(row.get('position', '0')) if row.get('position', 'NONE') != 'NONE' else '0'
     asset_category = str(row.get('assetCategory', 'STK'))
+    key = get_position_key(row)
 
-    # オプション (OPT)
-    # Options
+    # オプション: ポジションキーをそのまま名称として使用（ポジション数なし）
+    # Options: use position key directly as name (no position count suffix)
+    # これにより名称とmerge_keyが同一になり、逆変換の必要がなくなる
+    # This makes the name identical to merge_key, eliminating reverse-parsing
     if asset_category == 'OPT':
-        # オプション形式: "AAPL Jan24 $150-C (10)"
-        # Option format: "AAPL Jan24 $150-C (10)"
-        strike = str(row.get('strike', ''))
-        expiry = str(row.get('expiry', ''))
-        put_call = str(row.get('putCall', ''))
+        return key
 
-        # 有効期限フォーマット: "20240119" -> "Jan24"
-        # Format expiry date: "20240119" -> "Jan24"
-        try:
-            if expiry and expiry != 'NONE' and len(expiry) == 8:
-                expiry_date = datetime.strptime(expiry, '%Y%m%d')
-                month_abbr = expiry_date.strftime('%b')  # Jan, Feb, Mar, etc.
-                year_short = expiry_date.strftime('%y')  # 24, 25, etc.
-                expiry_formatted = f"{month_abbr}{year_short}"
-            else:
-                expiry_formatted = expiry[:6] if expiry != 'NONE' else ''
-        except (ValueError, TypeError, AttributeError) as e:
-            logger.warning(f"Failed to parse expiry date '{expiry}': {e}")
-            expiry_formatted = expiry[:6] if expiry != 'NONE' else ''
-
-        # 行使価格フォーマット: "150.0" -> "$150"
-        # Format strike: "150.0" -> "$150"
-        try:
-            if strike and strike != 'NONE':
-                strike_num = float(strike)
-                if strike_num == int(strike_num):
-                    strike_formatted = f"${int(strike_num)}"
-                else:
-                    strike_formatted = f"${strike_num:.1f}"
-            else:
-                strike_formatted = ''
-        except (ValueError, TypeError) as e:
-            logger.warning(f"Failed to parse strike price '{strike}': {e}")
-            strike_formatted = f"${strike}" if strike != 'NONE' else ''
-
-        # Put/Call インジケーター: C または P
-        # Put/Call indicator: C or P
-        pc_indicator = put_call[0].upper() if put_call and put_call != 'NONE' else ''
-
-        # オプション名を構築: 明確さのためハイフン区切りで "AAPL Jan24 $150-C (10)"
-        # Build option name: "AAPL Jan24 $150-C (10)" with hyphen separator for clarity
-        option_name = f"{symbol} {expiry_formatted} {strike_formatted}-{pc_indicator} ({position})"
-
-        # 20文字制限内に収める（MoneyForward制約）
-        # Ensure within 20 char limit (MoneyForward constraint)
-        if len(option_name) > 20:
-            # 必要に応じてシンボルを切り詰める: "AAPL" -> "APL"
-            # Truncate symbol if needed: "AAPL" -> "APL"
-            symbol_short = symbol[:3] if len(symbol) > 4 else symbol
-            option_name = f"{symbol_short} {expiry_formatted} {strike_formatted}-{pc_indicator} ({position})"
-
-        return option_name[:20]  # 20文字でハードリミット / Hard limit at 20 chars
-
-    # 先物 (FUT)
-    # Futures
-    elif asset_category == 'FUT':
-        # 先物形式: "ES Mar24 (5)"
-        # Futures format: "ES Mar24 (5)"
-        expiry = str(row.get('expiry', ''))
-
-        # 有効期限フォーマット: "20240315" -> "Mar24"
-        # Format expiry date: "20240315" -> "Mar24"
-        try:
-            if expiry and expiry != 'NONE' and len(expiry) == 8:
-                expiry_date = datetime.strptime(expiry, '%Y%m%d')
-                month_abbr = expiry_date.strftime('%b')
-                year_short = expiry_date.strftime('%y')
-                expiry_formatted = f"{month_abbr}{year_short}"
-            else:
-                expiry_formatted = ''
-        except (ValueError, TypeError, AttributeError) as e:
-            logger.warning(f"Failed to parse futures expiry date '{expiry}': {e}")
-            expiry_formatted = ''
-
-        if expiry_formatted:
-            future_name = f"{symbol} {expiry_formatted} ({position})"
-        else:
-            future_name = f"{symbol} ({position})"
-
-        return future_name[:20]
-
-    # CFD（差金決済取引）
-    # CFD (Contract for Difference)
-    elif asset_category == 'CFD':
-        # CFD形式: "SPX500 (10)"
-        # CFD format: "SPX500 (10)"
-        cfd_name = f"{symbol} ({position})"
-        return cfd_name[:20]
-
-    # ワラント (WAR)
-    # Warrants
-    elif asset_category == 'WAR':
-        # ワラント形式: "TSLAW (1000)"
-        # Warrant format: "TSLAW (1000)"
-        warrant_name = f"{symbol} ({position})"
-        return warrant_name[:20]
-
-    # 外国為替 (SWP/CASH)
-    # Forex (Swaps/FX)
-    elif asset_category == 'SWP' or asset_category == 'CASH':
-        # 外国為替形式: "EUR.USD (100k)"
-        # Forex format: "EUR.USD (100k)"
-        # ポジションをk（千単位）でフォーマット
-        # Format position in k (thousands)
+    # 外国為替: k（千単位）でポジション数をフォーマット
+    # Forex: format position in k (thousands)
+    if asset_category in ('SWP', 'CASH'):
         try:
             pos_num = float(position)
             if abs(pos_num) >= 1000:
-                pos_formatted = f"{int(pos_num/1000)}k"
+                pos_formatted = f"{int(pos_num / 1000)}k"
             else:
                 pos_formatted = position
-        except (ValueError, TypeError) as e:
-            logger.warning(f"Failed to parse forex position '{position}': {e}")
+        except (ValueError, TypeError):
             pos_formatted = position
-
-        forex_name = f"{symbol} ({pos_formatted})"
-        return forex_name[:20]
-
-    # 投資信託 (FND)
-    # Mutual Funds
-    elif asset_category == 'FND':
-        # 投資信託形式: "VTSAX (50)"
-        # Fund format: "VTSAX (50)"
-        fund_name = f"{symbol} ({position})"
-        return fund_name[:20]
-
-    # 債券 (BND)
-    # Bonds
-    elif asset_category == 'BND':
-        # 債券形式: "US10Y 2.5% (10)"
-        # Bond format: "US10Y 2.5% (10)"
-        # 説明フィールドから利率を抽出しようと試みる
-        # Try to extract coupon rate from description field
-        description = str(row.get('description', ''))
-        coupon = ''
-
-        # 説明から利率パターンを検索（例: "2.5%"）
-        # Search for coupon pattern in description (e.g., "2.5%")
-        import re
-        coupon_match = re.search(r'(\d+\.?\d*)\s*%', description)
-        if coupon_match:
-            coupon = f" {coupon_match.group(1)}%"
-
-        bond_name = f"{symbol}{coupon} ({position})"
-        return bond_name[:20]
-
-    # 商品間スプレッド (ICS)
-    # Inter-Commodity Spreads
-    elif asset_category == 'ICS':
-        # ICS形式: "GC-SI (2)"
-        # ICS format: "GC-SI (2)"
-        ics_name = f"{symbol} ({position})"
-        return ics_name[:20]
-
-    # 株式およびその他（デフォルト）
-    # Stocks and other (default)
+        suffix = f" ({pos_formatted})"
     else:
-        # 株式形式: "AAPL (100)"
-        # Stock format: "AAPL (100)"
-        stock_name = f"{symbol} ({position})"
-        return stock_name[:20]
+        suffix = f" ({position})"
+
+    # その他の資産タイプ: 括弧付きポジション数 "{key} ({pos})"
+    # Other asset types: parenthesized position count "{key} ({pos})"
+    full_name = f"{key}{suffix}"
+    if len(full_name) <= 20:
+        return full_name
+    return key[:20]
 
 
 def requires_2fa_verification(page):
@@ -428,36 +369,71 @@ def get_mf_cash_deposit(page):
     return df
 
 
-def get_mf_equity(page):
-    df = get_data_from_mf_table(page, 'table-eq')
-    # '銘柄コード'列を'symbol'列にリネーム
-    # Rename '銘柄コード' column to 'symbol'
-    if '銘柄コード' in df.columns:
-        df = df.rename(columns={'銘柄コード': 'symbol'})
-        # '銘柄名'から'|'の前の部分を取得し、ポジション数量 (xx.x) を削除
-        # Extract part before '|' from stock name, and remove position quantity (xx.x)
-        df['symbol'] = df['銘柄名'].str.split('|').str[0].str.replace(r'\s*\([\d.]+\)\s*$', '', regex=True).str.strip()
+def _read_mf_table_section(page, table_type):
+    """
+    Read one MF table section, extract merge_key and value_JPY, return DataFrame.
+    Adds 'source_table' column so callers know which table each row came from.
+    """
+    df = get_data_from_mf_table(page, table_type)
+    if df.empty:
+        return df
+
+    # 銘柄名からマージキーを抽出（ポジションサフィックスを除去）
+    # Extract merge key from name (strip position suffix)
+    if '銘柄名' in df.columns:
+        logger.info(f"Raw 銘柄名 from MF {table_type}: {df['銘柄名'].tolist()}")
+        df['merge_key'] = df['銘柄名'].str.split('|').str[0].str.replace(
+            r'(?:\s*\(-?[\d.]+k?\)|-[\d.]+)\s*$', '', regex=True).str.strip()
+        logger.info(f"Computed merge_keys from {table_type}: {df['merge_key'].tolist()}")
     else:
-        # dfに"symbol"列を追加
-        # Add "symbol" column to df
-        df['symbol'] = None
-    # '評価額'列を'value_JPY'列にリネーム
-    # Rename '評価額' column to 'value_JPY'
-    if '評価額' in df.columns:
-        df = df.rename(columns={'評価額': 'value_JPY'})
-        # 'value_JPY'列について、カンマと「円」を取り除き、intに変換
-        # For 'value_JPY' column, remove commas and '円', convert to int
-        df['value_JPY'] = df['value_JPY'].str.replace(",", "").str.replace("円", "").astype(int)
+        df['merge_key'] = None
+
+    # 評価額 or 現在の価値 を value_JPY にリネーム
+    # Rename value column to value_JPY (try multiple possible column names)
+    for col_name in ['評価額', '現在の価値']:
+        if col_name in df.columns:
+            df = df.rename(columns={col_name: 'value_JPY'})
+            df['value_JPY'] = df['value_JPY'].str.replace(",", "").str.replace("円", "").astype(int)
+            break
     else:
-        # dfに"value_JPY"列を追加
-        # Add "value_JPY" column to df
         df['value_JPY'] = None
-    # 'asset_id'列を作成し、webの表からasset_idを取得して代入
-    # Create 'asset_id' column and get asset_id from web table
+
+    # どのテーブルから来たかを記録（modify/delete時に使用）
+    # Track source table for use in modify/delete operations
+    df['source_table'] = table_type
+
+    # asset_idを取得
+    # Get asset_id for each row
     df['asset_id'] = None
     for index, row in df.iterrows():
-        df.loc[index, 'asset_id'] = get_asset_id_from_mf_table(page, 'table-eq', row['row_no_in_mf_table'])
+        df.loc[index, 'asset_id'] = get_asset_id_from_mf_table(page, table_type, row['row_no_in_mf_table'])
+
     return df
+
+
+def get_mf_equity(page):
+    """
+    株式(table-eq)と先物OP(table-drv)の両テーブルからポジションを読み取り結合します。
+    Read positions from both equity (table-eq) and derivatives (table-drv) tables and combine.
+    """
+    df_eq = _read_mf_table_section(page, 'table-eq')
+    df_drv = _read_mf_table_section(page, 'table-drv')
+
+    parts = [df for df in [df_eq, df_drv] if not df.empty]
+    if not parts:
+        empty = pd.DataFrame(columns=['row_no_in_mf_table', 'merge_key', 'value_JPY', 'asset_id', 'source_table'])
+        return empty
+
+    return pd.concat(parts, ignore_index=True)
+
+
+def log_all_mf_tables(page):
+    """Log all table types found on the MF page (diagnostic helper)."""
+    html = page.content()
+    soup = BeautifulSoup(html, 'html.parser')
+    tables = soup.find_all('table', class_=lambda c: c and 'table-bordered' in c)
+    table_classes = [' '.join(t.get('class', [])) for t in tables]
+    logger.info(f"All table-bordered tables on MF page: {table_classes}")
 
 
 def get_data_from_mf_table(page, table_type):
@@ -490,14 +466,14 @@ def get_data_from_mf_table(page, table_type):
     # 'row_no_in_mf_table'列を先頭に移動
     # Move 'row_no_in_mf_table' column to the front
     df = df.reindex(columns=['row_no_in_mf_table'] + list(df.columns[:-1]))
-    df = df.drop(['変更', '削除'], axis=1)
+    df = df.drop([c for c in ['変更', '削除'] if c in df.columns], axis=1)
     return df
 
 
 def get_asset_id_from_mf_table(page, table_type, row_no_in_mf_table):
     # XPath injection prevention: validate table_type
     # XPath インジェクション防止: table_type を検証
-    if table_type not in ['table-depo', 'table-eq']:
+    if table_type not in ['table-depo', 'table-eq', 'table-drv']:
         raise ValueError(f"Invalid table type: {table_type}")
 
     # XPath injection prevention: validate row_no_in_mf_table is numeric
@@ -509,13 +485,10 @@ def get_asset_id_from_mf_table(page, table_type, row_no_in_mf_table):
     except (ValueError, TypeError) as e:
         raise ValueError(f"Invalid row number (must be numeric): {row_no_in_mf_table}") from e
 
-    if table_type == 'table-depo':
-        change_btn_column_no = 3
-    elif table_type == 'table-eq':
-        change_btn_column_no = 11
-
-    element_xpath = '//*[@class="table table-bordered {}"]/tbody/tr[{}]/td[{}]/a'.format(table_type, row_num,
-                                                                                         change_btn_column_no)
+    # モーダルリンクを行内で検索（列番号に依存しない汎用方式）
+    # Search for modal link within the row (generic approach not dependent on column number)
+    element_xpath = '//*[@class="table table-bordered {}"]/tbody/tr[{}]//a[contains(@href, "#modal_asset")]'.format(
+        table_type, row_num)
     element = page.query_selector(element_xpath)
     if element is None:
         raise RuntimeError(f"Element not found at row {row_no_in_mf_table} in {table_type}. Page structure may have changed.")
@@ -538,13 +511,14 @@ def modify_asset_in_mf(page, table_type, asset_id, asset_name, market_value, cos
         asset_id: MoneyForward asset ID
         asset_name: Asset name to display
         market_value: Current market value (always updated)
-        cost_amount: Purchase price/cost basis (optional)
-        update_cost_basis: If True, update the purchase price field.
+        cost_amount: Purchase price/cost basis (optional, only updated if update_cost_basis=True)
+        update_cost_basis: If True, update the purchase price/cost basis field.
                           If False (default), preserve existing purchase price to maintain history.
 
-    Note: To preserve historical data and allow MoneyForward to track gains/losses over time,
-          we only update the purchase price when explicitly requested (e.g., first time or
-          when user wants to update cost basis). Otherwise, we only update the current value.
+    Note: This function NEVER modifies the purchase date - that field is only set when creating
+          new assets. The purchase date always remains the original date from the first creation.
+          Cost basis SHOULD be updated (update_cost_basis=True) for equities when positions change
+          through additional buys/sells, as IBKR provides the current average cost basis.
     """
     # XPath injection prevention: validate asset_id
     # XPath インジェクション防止: asset_id を検証
@@ -738,18 +712,20 @@ def delete_asset_in_mf(page, table_type, asset_id):
         f'.table.table-bordered.{table_type} .btn-asset-action[data-method="delete"]')
     # 削除ボタンの中からasset_idを含むボタンを検索
     # Find the button containing asset_id among delete buttons
+    deleted = False
     for delete_button in delete_buttons:
         href = delete_button.get_attribute('href')
         if asset_id in href:
             delete_button.click()
-            # 1秒待機
-            # Wait for 1 sec
             page.wait_for_timeout(1000)
-            # ページ遷移を待機（オプション、ページによって異なる）
-            # Wait for navigation (optional, depending on the page)
             page.wait_for_load_state('networkidle')
+            deleted = True
             break
-    return True
+    if not deleted:
+        logger.warning(f"DELETE FAILED: no delete button found for asset_id={asset_id} in {table_type}. "
+                       f"Found {len(delete_buttons)} buttons with hrefs: "
+                       f"{[b.get_attribute('href') for b in delete_buttons[:3]]}")
+    return deleted
 
 
 def reflect_to_mf_cash_deposit(page, ib_cash_report):
@@ -866,70 +842,77 @@ def reflect_to_mf_equity(page, ib_open_position):
         - 完全なマッピングについてはASSET_SUBCLASS_MAPを参照
           See ASSET_SUBCLASS_MAP for complete mapping of all MoneyForward asset types
 
-    保守的な削除ポリシー:
-    CONSERVATIVE DELETION POLICY:
-        - 資産は自動的に削除されることはありません
-          Assets are NEVER automatically deleted
-        - MFにポジションがあるがIBKRレポートにない場合、0に更新します
-          If a position exists in MF but not in IBKR report, we UPDATE it to 0 value
-        - クローズポジション、期限切れオプションなどの履歴データを保持します
-          This preserves historical data for closed positions, expired options, etc.
-        - MoneyForwardがポジション終了後も履歴パフォーマンスを表示できるようにします
-          Allows MoneyForward to show historical performance even after position closure
-        - 必要に応じて削除機能で手動削除が可能です
-          Manual deletion via delete functions still available if needed
+    削除ポリシー:
+    DELETION POLICY:
+        - MFにポジションがあるがIBKRレポートにない場合、自動的に削除します
+          If a position exists in MF but not in IBKR report, automatically DELETE it
+        - クローズポジション、期限切れオプション、売却済み保有株などに対応
+          Handles closed positions, expired options, sold holdings, etc.
+        - MoneyForwardのポートフォリオをIBKRの現在の状態と同期します
+          Keeps MoneyForward portfolio in sync with current IBKR state
+        - 履歴データが必要な場合は、MoneyForwardのアーカイブ機能を使用してください
+          Use MoneyForward's archive features if historical data is needed
     """
     # ---pageから株式ポジションの表を取得---
     # ---Get equity positions table from page---
     mf_equity = get_mf_equity(page)
-    # 両方のDataFrameに'symbol'列が存在するか確認
-    # Check if 'symbol' column exists in both DataFrames
-    if 'symbol' not in mf_equity.columns:
-        print("Warning: 'symbol' column not found in MoneyForward equity data.")
-        mf_equity['symbol'] = None
-    if 'symbol' not in ib_open_position.columns:
-        print("Warning: 'symbol' column not found in IB open positions data.")
-        ib_open_position['symbol'] = None
 
-    # デバッグ: シンボルの内容を表示
-    # Debug: Show symbol contents
-    logger.info(f"MoneyForward equity symbols: {mf_equity['symbol'].tolist() if not mf_equity.empty else 'None'}")
-    logger.info(f"IBKR positions symbols: {ib_open_position['symbol'].tolist() if not ib_open_position.empty else 'None'}")
+    # merge_key列の確認 / Verify merge_key columns exist
+    if 'merge_key' not in mf_equity.columns:
+        logger.warning("'merge_key' column not found in MoneyForward equity data.")
+        mf_equity['merge_key'] = None
 
-    # 重複チェック: MoneyForwardに同じシンボルの複数のエントリがある場合は警告
-    # Duplicate check: Warn if MoneyForward has multiple entries for the same symbol
-    if not mf_equity.empty and 'symbol' in mf_equity.columns:
-        duplicates = mf_equity[mf_equity.duplicated(subset=['symbol'], keep=False)]
+    # ---IBKRデータのmerge_keyを計算---
+    # ---Compute merge_key for IBKR data---
+    ib_open_position = ib_open_position.copy()
+    ib_open_position['merge_key'] = ib_open_position.apply(get_position_key, axis=1)
+
+    # ---IBKRのロットレベル重複をmerge_keyで集約---
+    # ---Aggregate IBKR lot-level duplicates by merge_key---
+    if ib_open_position['merge_key'].duplicated().any():
+        logger.info(f"Aggregating lot-level IBKR positions: "
+                    f"{ib_open_position[ib_open_position['merge_key'].duplicated(keep=False)]['merge_key'].tolist()}")
+        sum_cols = ['position', 'positionValue', 'costBasisMoney', 'positionValue_JPY', 'costBasisMoney_JPY']
+        agg_dict = {}
+        for col in ib_open_position.columns:
+            if col == 'merge_key':
+                continue
+            agg_dict[col] = 'sum' if col in sum_cols and col in ib_open_position.columns else 'first'
+        ib_open_position = ib_open_position.groupby('merge_key', as_index=False).agg(agg_dict)
+
+    # デバッグ: マージキーの内容を表示
+    # Debug: Show merge key contents
+    logger.info(f"MoneyForward equity merge_keys: {mf_equity['merge_key'].tolist() if not mf_equity.empty else 'None'}")
+    logger.info(f"IBKR positions merge_keys: {ib_open_position['merge_key'].tolist() if not ib_open_position.empty else 'None'}")
+
+    # 重複チェック: MoneyForwardに同じmerge_keyの複数のエントリがある場合は警告
+    # Duplicate check: Warn if MoneyForward has multiple entries for the same merge_key
+    if not mf_equity.empty and 'merge_key' in mf_equity.columns:
+        duplicates = mf_equity[mf_equity.duplicated(subset=['merge_key'], keep=False)]
         if not duplicates.empty:
-            logger.warning(f"WARNING: MoneyForward has duplicate symbol entries: {duplicates['symbol'].tolist()}")
+            logger.warning(f"WARNING: MoneyForward has duplicate entries: {duplicates['merge_key'].tolist()}")
             logger.warning("Only the first occurrence will be updated. Please manually remove duplicates.")
-            # 最初の出現のみを保持（重複を削除）
-            # Keep only first occurrence (remove duplicates)
-            mf_equity = mf_equity.drop_duplicates(subset=['symbol'], keep='first')
+            mf_equity = mf_equity.drop_duplicates(subset=['merge_key'], keep='first')
 
-    # ib_open_positionとmf_equityをマージ（キー: symbol）
-    # Merge ib_open_position and mf_equity (key: symbol)
-    merged_df = pd.merge(mf_equity, ib_open_position, on='symbol', how='outer')
+    # merge_keyでマージ / Merge on merge_key
+    merged_df = pd.merge(mf_equity, ib_open_position, on='merge_key', how='outer')
 
-    # デバッグ: マージ結果を表示
-    # Debug: Show merge results
-    # 存在する列のみ表示 / Only show columns that exist
-    display_cols = ['symbol', 'row_no_in_mf_table']
+    # デバッグ: マージ結果を表示 / Debug: Show merge results
+    display_cols = ['merge_key', 'row_no_in_mf_table']
     if 'value_JPY' in merged_df.columns:
         display_cols.append('value_JPY')
     if 'positionValue_JPY' in merged_df.columns:
         display_cols.append('positionValue_JPY')
     logger.info(f"Merged equity data:\n{merged_df[display_cols].to_string()}")
+
     # 非数値列のみ'NONE'で埋める / Fill only non-numeric columns with 'NONE'
-    # 数値列は数値のままにする / Keep numeric columns as numeric
-    string_columns = ['symbol', 'row_no_in_mf_table', 'asset_id', '銘柄名', 'currency', 'assetCategory',
-                      'subCategory', 'description', 'strike', 'expiry', 'putCall']
+    string_columns = ['merge_key', 'symbol', 'row_no_in_mf_table', 'asset_id', 'source_table', '銘柄名', 'currency',
+                      'assetCategory', 'subCategory', 'description', 'strike', 'expiry', 'putCall']
     for col in string_columns:
         if col in merged_df.columns:
             merged_df[col] = merged_df[col].fillna('NONE')
+
     # 数値列は数値型を維持 / Keep numeric columns as numeric type
-    # IBKRポジションがない場合、positionValue_JPY列を追加（NaN値）
-    # Add positionValue_JPY column with NaN if no IBKR positions
     if 'positionValue_JPY' not in merged_df.columns:
         import numpy as np
         merged_df['positionValue_JPY'] = np.nan
@@ -938,54 +921,48 @@ def reflect_to_mf_equity(page, ib_open_position):
     for col in numeric_columns:
         if col in merged_df.columns:
             merged_df[col] = pd.to_numeric(merged_df[col], errors='coerce')
-    # 'Action'列を追加（初期値: 'NONE'）
-    # Add 'Action' column (initial value: 'NONE')
+
+    # 'Action'列を追加 / Add 'Action' column
     merged_df['Action'] = 'NONE'
-    # 条件に基づいて'Action'列を更新
-    # Update 'Action' column based on conditions
     if 'positionValue_JPY' in merged_df.columns:
         merged_df.loc[(merged_df['row_no_in_mf_table'] != 'NONE') & (
                 merged_df['value_JPY'] != merged_df['positionValue_JPY']), 'Action'] = 'MODIFY'
     # MFにポジションがあるがIBKRにない場合、削除
     # If position exists in MF but not in IBKR, DELETE it
-    # クローズポジション、期限切れオプション、売却済み保有株に対応
-    # Handles closed positions, expired options, sold holdings
     merged_df.loc[
         (merged_df['row_no_in_mf_table'] != 'NONE') & (merged_df['positionValue_JPY'].isna()), 'Action'] = 'DELETE'
     merged_df.loc[
         (merged_df['row_no_in_mf_table'] == 'NONE') & (merged_df['positionValue_JPY'].notna()), 'Action'] = 'ADD'
-    # print(merged_df)
+
+    logger.info(f"Actions:\n{merged_df[['merge_key', 'row_no_in_mf_table', 'Action']].to_string()}")
+
     # ---更新を実施---
     # ---Execute updates---
     df_to_modify = merged_df[(merged_df['Action'] == 'MODIFY')]
     for index, row in df_to_modify.iterrows():
-        # 改善されたフォーマットを使用: 株式 "AAPL (100)", オプション "AAPL Jan24 $150-C (10)"
-        # Use improved formatting: stocks "AAPL (100)", options "AAPL Jan24 $150-C (10)"
         asset_name_to_input = format_asset_name(row)
-        # 現在の価値(positionValue_JPY)のみ更新、コストベースは履歴データ保持のため保存
-        # Only update current value (positionValue_JPY), preserve cost basis to maintain historical data
-        # MoneyForwardが損益を正確に追跡できるようにする
-        # This allows MoneyForward to track gains/losses over time correctly
-        modify_asset_in_mf(page, 'table-eq', row['asset_id'], asset_name_to_input, int(row['positionValue_JPY']),
-                           update_cost_basis=False)
+        table_type = str(row.get('source_table', 'table-eq'))
+        if table_type == 'NONE':
+            table_type = 'table-eq'
+        modify_asset_in_mf(page, table_type, row['asset_id'], asset_name_to_input, int(row['positionValue_JPY']),
+                           cost_amount=int(row['costBasisMoney_JPY']), update_cost_basis=True)
+
     # ---削除を実施 - IBKRに存在しないポジションを削除---
     # ---Execute deletions - Remove positions that don't exist in IBKR---
     df_to_delete = merged_df[(merged_df['Action'] == 'DELETE')]
     for index, row in df_to_delete.iterrows():
-        # MoneyForwardから元の資産名を取得
-        # Get original asset name from MoneyForward
-        original_name = str(row['銘柄名']) if '銘柄名' in row and row['銘柄名'] != 'NONE' else row['symbol']
-        logger.info(f"Deleting closed position: {original_name}")
-        delete_asset_in_mf(page, 'table-eq', row['asset_id'])
+        original_name = str(row['銘柄名']) if '銘柄名' in row and row['銘柄名'] != 'NONE' else row['merge_key']
+        table_type = str(row.get('source_table', 'table-eq'))
+        if table_type == 'NONE':
+            table_type = 'table-eq'
+        logger.info(f"Deleting closed position: {original_name} from {table_type}")
+        delete_asset_in_mf(page, table_type, row['asset_id'])
+
     # ---追加を実施---
     # ---Execute additions---
     df_to_add = merged_df[(merged_df['Action'] == 'ADD')]
     for index, row in df_to_add.iterrows():
-        # 改善されたフォーマットを使用: 株式 "AAPL (100)", オプション "AAPL Jan24 $150-C (10)", 先物 "ES Mar24 (5)"など
-        # Use improved formatting: stocks "AAPL (100)", options "AAPL Jan24 $150-C (10)", futures "ES Mar24 (5)", etc.
         asset_name_to_input = format_asset_name(row)
-        # 通貨、資産カテゴリ（STK、OPT、FUT、CFD、WAR、SWP、FND、BND、ICSなど）、サブカテゴリに基づいて資産タイプを決定
-        # Determine asset type based on currency, asset category (STK, OPT, FUT, CFD, WAR, SWP, FND, BND, ICS, etc.), and subcategory
         asset_category = str(row.get('assetCategory', 'STK'))
         subcategory = str(row.get('subCategory', None)) if 'subCategory' in row and row['subCategory'] != 'NONE' else None
         asset_type_to_input = get_asset_type_for_currency(row['currency'], asset_category, subcategory)
@@ -995,20 +972,16 @@ def reflect_to_mf_equity(page, ib_open_position):
         purchase_date = None
         if 'openDateTime' in row and row['openDateTime'] != 'NONE' and str(row['openDateTime']).strip():
             try:
-                # IBKRのopenDateTimeは "YYYY-MM-DD;HH:MM:SS" 形式
-                # IBKR openDateTime is in "YYYY-MM-DD;HH:MM:SS" format
                 open_datetime_str = str(row['openDateTime'])
-                purchase_date = open_datetime_str.split(';')[0]  # 日付部分のみ取得 / Get date part only
-                logger.info(f"Using IBKR openDateTime for {row['symbol']}: {purchase_date}")
+                purchase_date = open_datetime_str.split(';')[0]
+                logger.info(f"Using IBKR openDateTime for {row['merge_key']}: {purchase_date}")
             except Exception as e:
                 logger.warning(f"Failed to parse openDateTime '{row.get('openDateTime')}': {e}")
 
-        # openDateTimeが利用できない場合は、現在の日付にフォールバック
-        # Fallback to current date if openDateTime is not available
         if not purchase_date:
             from datetime import date
-            purchase_date = date.today().isoformat()  # YYYY-MM-DD形式 / YYYY-MM-DD format
-            logger.info(f"openDateTime not available for {row['symbol']}, using current date: {purchase_date}")
+            purchase_date = date.today().isoformat()
+            logger.info(f"openDateTime not available for {row['merge_key']}, using current date: {purchase_date}")
 
         create_asset_in_mf(page, asset_type_to_input, asset_name_to_input, int(row['positionValue_JPY']),
                            int(row['costBasisMoney_JPY']), purchase_date)
