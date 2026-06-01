@@ -1,6 +1,6 @@
 services:
   ibkr-mf-sync:
-    image: ibkr-mf-sync:latest
+    image: ghcr.io/retrohazard/ibkr_mf_sync:latest
     container_name: ibkr-mf-sync
     restart: unless-stopped
 

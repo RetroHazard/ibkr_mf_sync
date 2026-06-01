@@ -121,6 +121,39 @@ playwright install
 python main.py
 ```
 
+## Release Pipeline
+
+Every merge to `main` automatically builds a new Docker image and pushes it to **GitHub Container Registry (GHCR)** via GitHub Actions (`.github/workflows/docker-release.yml`).
+
+The workflow triggers only when files that affect the image change (Python source, `requirements.txt`, `Dockerfile`, `docker/`). Documentation-only changes do not trigger a build.
+
+### Image location
+
+```
+ghcr.io/retrohazard/ibkr_mf_sync:latest
+```
+
+Two tags are published on each build:
+- `latest` — always points to the most recent build from `main`
+- `sha-<commit>` — pinned to a specific commit for rollback
+
+### Pulling the latest image on Portainer
+
+In Portainer, go to **Stacks → ibkr-mf-sync → Editor**, then click **Pull and redeploy**. The NAS fetches the new image from GHCR and restarts the container with zero downtime.
+
+### Automatic redeployment (optional)
+
+To have the NAS redeploy automatically whenever a new image is published, add a Portainer stack webhook as a GitHub repository secret:
+
+1. In Portainer: **Stacks → ibkr-mf-sync → Webhooks** → enable and copy the URL
+2. In GitHub: **Settings → Secrets and variables → Actions → New repository secret**
+   - Name: `PORTAINER_WEBHOOK_URL`
+   - Value: the URL from step 1
+
+The GitHub Actions workflow will call this webhook at the end of every successful image push.
+
+---
+
 ## Docker Deployment (NAS / Portainer)
 
 The recommended way to run this on a schedule from a NAS (Synology, QNAP, etc.) is via Docker with Portainer. The container runs a cron daemon internally, so no external scheduler is required.
@@ -181,31 +214,14 @@ RUN_ON_START=false
 
 ---
 
-### Step 3 — Build the image
+### Step 3 — Deploy in Portainer
 
-On the machine where the project lives (or on the NAS itself if it has Docker build support):
-
-```bash
-docker build -t ibkr-mf-sync:latest .
-```
-
-If you're building on your local machine and deploying to a remote NAS, push to a private registry or use `docker save` / `docker load`:
-
-```bash
-# Save to tarball, copy to NAS, load there
-docker save ibkr-mf-sync:latest | gzip > ibkr-mf-sync.tar.gz
-scp ibkr-mf-sync.tar.gz user@nas:/path/to/
-ssh user@nas "docker load < /path/to/ibkr-mf-sync.tar.gz"
-```
-
----
-
-### Step 4 — Deploy in Portainer
+The pre-built image is published to GHCR automatically on every merge to `main` — no local Docker build is required.
 
 1. In Portainer, go to **Stacks → Add Stack**
 2. Paste the contents of `docker-compose.yml` into the Web editor
 3. Under **Environment variables**, add each key from your `.env` file (or use the "Load variables from .env file" option if available)
-4. Click **Deploy the stack**
+4. Click **Deploy the stack** — Portainer pulls `ghcr.io/retrohazard/ibkr_mf_sync:latest` from GHCR automatically
 
 The stack creates two named Docker volumes automatically:
 - `ibkr-mf-sync_ibkr-session` — stores the MoneyForward login session
@@ -213,7 +229,7 @@ The stack creates two named Docker volumes automatically:
 
 ---
 
-### Step 5 — Copy the session file into the volume
+### Step 4 — Copy the session file into the volume
 
 After the stack is deployed and the container is running, copy your locally-generated session into the volume:
 
@@ -306,7 +322,7 @@ You can also detect the 2FA wait state programmatically — while waiting, the c
 
 Sessions typically last several months. If the session expires, the next scheduled run will trigger the 2FA flow described above. After successfully completing 2FA in the container, the session file is automatically refreshed and saved — future runs will not need 2FA again until the next expiry.
 
-If you prefer to refresh the session proactively, repeat [Step 1](#step-1--seed-the-browser-session-locally) locally and re-copy the file using the command in [Step 5](#step-5--copy-the-session-file-into-the-volume).
+If you prefer to refresh the session proactively, repeat [Step 1](#step-1--seed-the-browser-session-locally) locally and re-copy the file using the command in [Step 4](#step-4--copy-the-session-file-into-the-volume).
 
 ---
 
