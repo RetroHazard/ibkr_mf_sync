@@ -121,6 +121,29 @@ playwright install
 python main.py
 ```
 
+## Dependency Management
+
+Python dependencies are managed as two files:
+
+- **`requirements.txt`** — direct dependencies only. This is the file you edit when adding or upgrading a package.
+- **`requirements.lock`** — the full pinned dependency tree with SHA256 hashes for every package, generated from `requirements.txt`. This is what the Docker image installs from (`pip install --require-hashes`), ensuring no package can be silently swapped for a malicious version.
+
+### Regenerating the lock file
+
+Run this whenever you change `requirements.txt`. The command runs inside a Linux container to guarantee the hashes match the target platform:
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm \
+  -v "$(pwd -W):/app" \
+  -w /app \
+  python:3.11-slim \
+  bash -c "pip install pip-tools --quiet && pip-compile --generate-hashes --output-file=requirements.lock requirements.txt"
+```
+
+Commit both `requirements.txt` and `requirements.lock` together. The next merge to `main` will rebuild the Docker image with the updated lock file.
+
+---
+
 ## Release Pipeline
 
 Every merge to `main` automatically builds a new Docker image and pushes it to **GitHub Container Registry (GHCR)** via GitHub Actions (`.github/workflows/docker-release.yml`).
