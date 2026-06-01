@@ -19,9 +19,11 @@ Run this whenever you change `requirements.txt`. The command runs inside a Linux
 MSYS_NO_PATHCONV=1 docker run --rm \
   -v "$(pwd -W):/app" \
   -w /app \
-  python:3.11-slim \
+  mcr.microsoft.com/playwright/python:v1.40.0-jammy \
   bash -c "pip install pip-tools --quiet && pip-compile --generate-hashes --output-file=requirements.lock requirements.txt"
 ```
+
+> **Important**: always use the same image tag as the `FROM` line in the `Dockerfile`. The lock file must be generated on the same Python version that installs it — using a different image (e.g. `python:3.11-slim`) can resolve packages incompatible with the build environment.
 
 Commit both `requirements.txt` and `requirements.lock` together. The next merge to `main` will rebuild the Docker image with the updated lock file.
 
