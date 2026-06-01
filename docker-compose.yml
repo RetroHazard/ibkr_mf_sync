@@ -57,9 +57,6 @@ services:
       - WATCHTOWER_CLEANUP=true
       # How often to check for new images, in seconds (default: every 6 hours)
       - WATCHTOWER_POLL_INTERVAL=${WATCHTOWER_POLL_INTERVAL:-21600}
-      # GHCR credentials — GitHub PAT with read:packages scope
-      - REPO_USER=${GHCR_USERNAME}
-      - REPO_PASS=${GHCR_TOKEN}
 
 volumes:
   ibkr-session:
