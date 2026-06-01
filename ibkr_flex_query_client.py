@@ -1,21 +1,78 @@
-from ibflex import client
 import pandas as pd
 import xml.etree.ElementTree as ET
 import logging
+import time
+import requests
 
 # ロギング設定 / Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# IBKR Flex Web Service v3 エンドポイント / IBKR Flex Web Service v3 endpoints
+_SEND_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest"
+_GET_URL  = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement"
+
+# 一時的なエラーコード（リトライ対象） / Transient error codes (eligible for retry)
+_RETRYABLE_CODES = {"1001", "1004", "1009", "1018", "1019", "1021"}
+_MAX_RETRIES = 5
+_RETRY_DELAY_SECONDS = 30
+
+
+def _flex_request(url, params, timeout=15):
+    resp = requests.get(url, params=params, headers={"user-agent": "Java"}, timeout=timeout)
+    resp.raise_for_status()
+    return resp.content
+
+
+def _download_flex(token, query_id):
+    # ステップ1: レポート生成リクエスト / Step 1: request statement generation
+    content = _flex_request(_SEND_URL, {"v": "3", "t": token, "q": query_id})
+    root = ET.fromstring(content)
+    status = root.findtext("Status")
+    if status != "Success":
+        code = root.findtext("ErrorCode") or "unknown"
+        msg  = root.findtext("ErrorMessage") or "unknown error"
+        raise RuntimeError(f"IBKR SendRequest failed: Code={code}: {msg}")
+    ref_code  = root.findtext("ReferenceCode")
+    stmt_url  = root.findtext("Url") or _GET_URL
+
+    # ステップ2: レポート取得（生成完了まで待機） / Step 2: retrieve statement (poll until ready)
+    for poll in range(1, 20):
+        time.sleep(poll * 2)
+        content = _flex_request(stmt_url, {"v": "3", "t": token, "q": ref_code})
+        if b"FlexQueryResponse" in content:
+            return content
+        inner = ET.fromstring(content)
+        code = inner.findtext("ErrorCode") or ""
+        msg  = inner.findtext("ErrorMessage") or ""
+        if code in ("1004", "1019"):
+            logger.info(f"Statement still generating (poll {poll}): {msg}")
+            continue
+        raise RuntimeError(f"IBKR GetStatement failed: Code={code}: {msg}")
+    raise RuntimeError("IBKR statement generation timed out after polling")
+
 
 def get_ib_flex_report(ib_flex_token, ib_flex_query_id, report_type):
-    # IB FLEXレポートを取得
-    # Get the IB FLEX report
-    try:
-        response = client.download(ib_flex_token, ib_flex_query_id)
-    except Exception as e:
-        logger.error(f"Failed to download IBKR Flex report: {e}")
-        raise RuntimeError(f"IBKR API download failed: {e}") from e
+    # IB FLEXレポートを取得（リトライ付き）
+    # Get the IB FLEX report (with retry for transient errors)
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            response = _download_flex(ib_flex_token, ib_flex_query_id)
+            break
+        except RuntimeError as e:
+            code = ""
+            msg = str(e)
+            if "Code=" in msg:
+                code = msg.split("Code=")[1].split(":")[0]
+            if code in _RETRYABLE_CODES and attempt < _MAX_RETRIES:
+                logger.warning(f"Transient IBKR error (attempt {attempt}/{_MAX_RETRIES}): {e}. Retrying in {_RETRY_DELAY_SECONDS}s...")
+                time.sleep(_RETRY_DELAY_SECONDS)
+                continue
+            logger.error(f"Failed to download IBKR Flex report: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to download IBKR Flex report: {e}")
+            raise RuntimeError(f"IBKR API download failed: {e}") from e
 
     if not response:
         logger.error("Empty response received from IBKR API")
