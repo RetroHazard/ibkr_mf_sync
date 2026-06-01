@@ -56,7 +56,7 @@ MoneyForward enforces a 20-character name limit; the position count suffix is dr
 
 This application supports two configuration methods (in order of precedence):
 
-1. **Environment Variables (Recommended for production/Lambda)**
+1. **Environment Variables (Recommended for production)**
 2. **config.ini file (Local development fallback)**
 
 #### Option 1: Environment Variables (Recommended)
@@ -93,8 +93,6 @@ cp .env.template .env
 # Edit .env with your credentials
 ```
 
-**Note**: For AWS Lambda deployment, set these as Lambda environment variables or use AWS Secrets Manager.
-
 #### Option 2: config.ini File (Fallback)
 
 If environment variables are not set, the application will fall back to `config.ini`:
@@ -120,6 +118,10 @@ playwright install
 ```bash
 python main.py
 ```
+
+## Self-Hosting
+
+A pre-built Docker image is published to GHCR on every release. For instructions on deploying to a NAS via Portainer, see [DOCKER.md](DOCKER.md).
 
 ## Libraries
 

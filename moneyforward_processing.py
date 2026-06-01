@@ -232,6 +232,58 @@ def requires_2fa_verification(page):
         return False
 
 
+def submit_2fa_code(page, code):
+    """
+    ヘッドレスモードでMoneyForwardの2FA/OTP確認コードを送信します。
+    Submit a 2FA/OTP verification code to MoneyForward in headless mode.
+
+    Args:
+        page: Playwright page object (already on the 2FA/OTP page)
+        code: OTP code string provided by the operator
+
+    Returns:
+        True on success
+
+    Raises:
+        RuntimeError: If the OTP input field or submit button cannot be found
+    """
+    logger.info(f"Submitting 2FA code on page: {page.url}")
+
+    # OTP入力フィールドを検索（一般的なMoneyForwardセレクターを試す）
+    # Find OTP input field (try common MoneyForward selectors)
+    otp_input = (
+        page.query_selector('input[name*="otp"]') or
+        page.query_selector('input[name*="code"]') or
+        page.query_selector('input[name*="token"]') or
+        page.query_selector('input[name*="verification"]') or
+        page.query_selector('input[type="number"][maxlength]') or
+        page.query_selector('input[type="text"][maxlength]')
+    )
+    if otp_input is None:
+        raise RuntimeError(
+            f"Could not find OTP input field on 2FA page ({page.url}). "
+            "MoneyForward's 2FA page structure may have changed."
+        )
+
+    otp_input.fill(str(code).strip())
+
+    # 送信ボタンを検索してクリック / Find and click submit button
+    submit = (
+        page.query_selector('#submitto') or
+        page.query_selector('input[type="submit"]') or
+        page.query_selector('button[type="submit"]')
+    )
+    if submit is None:
+        raise RuntimeError(
+            f"Could not find submit button on 2FA page ({page.url}). "
+            "MoneyForward's 2FA page structure may have changed."
+        )
+
+    submit.click()
+    logger.info("2FA code submitted successfully")
+    return True
+
+
 def login(page, mf_id, mf_pass):
     """
     MoneyForward MEにログイン / Login to MoneyForward ME
