@@ -1,5 +1,6 @@
 import configparser
 import os
+import time
 import logging
 import json
 from datetime import datetime, date
@@ -147,6 +148,59 @@ def get_ibkr_data_with_cache(ib_flex_token, ib_flex_query_id, report_type, cache
     return df
 
 
+def wait_for_2fa_input(session_path, timeout_seconds=600):
+    """
+    2FAコードをファイル経由で待機します（コンテナ環境用）。
+    Wait for a 2FA code via file drop (for container environments).
+
+    セッションディレクトリに '2fa_required' マーカーファイルを作成し、
+    '2fa_input' ファイルが現れるまでポーリングします。
+    Creates a '2fa_required' marker in the session directory and polls
+    for a '2fa_input' file written by the operator.
+
+    使用方法 / Usage:
+        docker exec ibkr-mf-sync sh -c 'echo 123456 > /app/session/2fa_input'
+    """
+    session_dir = os.path.dirname(session_path)
+    os.makedirs(session_dir, exist_ok=True)
+    marker_file = os.path.join(session_dir, '2fa_required')
+    input_file = os.path.join(session_dir, '2fa_input')
+
+    # 古い入力ファイルを削除 / Remove any stale input file from a previous attempt
+    if os.path.exists(input_file):
+        os.remove(input_file)
+
+    with open(marker_file, 'w') as f:
+        f.write(datetime.now().isoformat())
+
+    logger.warning("=" * 60)
+    logger.warning("2FA REQUIRED — OPERATOR ACTION NEEDED")
+    logger.warning("Provide the OTP code using one of:")
+    logger.warning(f"  docker exec ibkr-mf-sync sh -c 'echo YOUR_CODE > {input_file}'")
+    logger.warning(f"  Portainer console: echo YOUR_CODE > {input_file}")
+    logger.warning(f"Waiting up to {timeout_seconds // 60} minutes...")
+    logger.warning("=" * 60)
+
+    poll_interval = 5
+    elapsed = 0
+    while elapsed < timeout_seconds:
+        if os.path.exists(input_file):
+            with open(input_file, 'r') as f:
+                code = f.read().strip()
+            os.remove(input_file)
+            if os.path.exists(marker_file):
+                os.remove(marker_file)
+            if code:
+                logger.info("2FA code received via file input")
+                return code
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+
+    if os.path.exists(marker_file):
+        os.remove(marker_file)
+    raise TimeoutError(f"Timed out waiting for 2FA input after {timeout_seconds}s")
+
+
 def get_config_value(env_var, config, section, key, required=True):
     """
     環境変数から設定値を取得し、見つからない場合はconfig.iniにフォールバック。
@@ -225,9 +279,16 @@ def main():
         ib_open_position = utils.add_value_jpy(ib_open_position, 'positionValue', 'positionValue_JPY')
     else:
         print("No open positions found.")
-    # ブラウザセッションの保存先（永続化用）
-    # Browser session storage location (for persistence)
-    storage_state_path = os.path.join(os.path.dirname(__file__), '.browser_session.json')
+    # ブラウザセッションの保存先（BROWSER_SESSION_PATH環境変数でオーバーライド可能）
+    # Browser session storage location (overridable via BROWSER_SESSION_PATH env var)
+    storage_state_path = os.environ.get(
+        'BROWSER_SESSION_PATH',
+        os.path.join(os.path.dirname(__file__), '.browser_session.json')
+    )
+
+    # コンテナ環境では表示モードへのフォールバックを無効化
+    # Disable headed fallback in container environments (HEADLESS_ONLY=true)
+    headless_only = os.environ.get('HEADLESS_ONLY', 'false').lower() == 'true'
 
     # ヘッドレスモードで実行を試みる（2FAが必要な場合は表示モードで再試行）
     # Try running in headless mode first (retry in headed mode if 2FA is required)
@@ -279,28 +340,34 @@ def main():
                 # 2FA が必要な場合、ヘッドレスモードでは処理できないため終了
                 # If 2FA is required, we need to restart in headed mode
                 if needs_2fa and headless_mode:
-                    logger.warning("2FA verification required - restarting in headed mode for user interaction")
-                    logger.warning("Please complete the email verification in the browser window that will open")
-                    context.close()
-                    browser.close()
+                    if headless_only:
+                        code = wait_for_2fa_input(storage_state_path)
+                        mfproc.submit_2fa_code(page, code)
+                        page.wait_for_load_state('networkidle', timeout=15000)
+                        needs_2fa = False
+                    else:
+                        logger.warning("2FA verification required - restarting in headed mode for user interaction")
+                        logger.warning("Please complete the email verification in the browser window that will open")
+                        context.close()
+                        browser.close()
 
-                    # 表示モードで再起動
-                    # Restart in headed mode
-                    browser = playwright.chromium.launch(headless=False)
-                    context = browser.new_context(**context_options)
-                    page = context.new_page()
-                    page.set_default_timeout(300000)
-                    page.on("dialog", dialog_handler)
+                        # 表示モードで再起動
+                        # Restart in headed mode
+                        browser = playwright.chromium.launch(headless=False)
+                        context = browser.new_context(**context_options)
+                        page = context.new_page()
+                        page.set_default_timeout(300000)
+                        page.on("dialog", dialog_handler)
 
-                    page.goto(MF_IB_INSTITUTION_URL)
-                    page, needs_2fa = mfproc.login(page, MF_EMAIL, MF_PASS)
+                        page.goto(MF_IB_INSTITUTION_URL)
+                        page, needs_2fa = mfproc.login(page, MF_EMAIL, MF_PASS)
 
-                    if needs_2fa:
-                        # ユーザーが2FAを完了するまで待機
-                        # Wait for user to complete 2FA
-                        logger.info("Waiting for you to complete email verification (up to 5 minutes)...")
-                        page.wait_for_load_state('networkidle', timeout=300000)
-                        logger.info("2FA verification completed")
+                        if needs_2fa:
+                            # ユーザーが2FAを完了するまで待機
+                            # Wait for user to complete 2FA
+                            logger.info("Waiting for you to complete email verification (up to 5 minutes)...")
+                            page.wait_for_load_state('networkidle', timeout=300000)
+                            logger.info("2FA verification completed")
 
                 page.wait_for_load_state('networkidle')
             except PlaywrightError as e:

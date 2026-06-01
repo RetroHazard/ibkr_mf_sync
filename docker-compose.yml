@@ -1,0 +1,45 @@
+services:
+  ibkr-mf-sync:
+    image: ibkr-mf-sync:latest
+    container_name: ibkr-mf-sync
+    restart: unless-stopped
+
+    environment:
+      # --- MoneyForward credentials ---
+      - MF_EMAIL=${MF_EMAIL}
+      - MF_PASSWORD=${MF_PASSWORD}
+      - MF_IB_INSTITUTION_URL=${MF_IB_INSTITUTION_URL}
+
+      # --- IBKR Flex Query ---
+      - IBKR_FLEX_TOKEN=${IBKR_FLEX_TOKEN}
+      - IBKR_FLEX_QUERY_ID=${IBKR_FLEX_QUERY_ID}
+
+      # --- Schedule (cron syntax, default: 6am daily) ---
+      - CRON_SCHEDULE=${CRON_SCHEDULE:-0 6 * * *}
+
+      # --- Run once immediately when the container starts ---
+      - RUN_ON_START=${RUN_ON_START:-false}
+
+      # --- Session file path inside the container (matches volume mount below) ---
+      - BROWSER_SESSION_PATH=/app/session/.browser_session.json
+
+      # --- Prevents headed browser fallback when 2FA is triggered ---
+      - HEADLESS_ONLY=true
+
+    volumes:
+      # Persists the MoneyForward login session across container restarts.
+      # IMPORTANT: Seed this with a valid session before first run — see README.
+      - ibkr-session:/app/session
+
+      # Persists IBKR Flex Query response cache (avoids redundant API calls).
+      - ibkr-cache:/app/.cache
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  ibkr-session:
+  ibkr-cache:
