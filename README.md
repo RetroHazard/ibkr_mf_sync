@@ -141,16 +141,26 @@ Two tags are published on each build:
 
 In Portainer, go to **Stacks → ibkr-mf-sync → Editor**, then click **Pull and redeploy**. The NAS fetches the new image from GHCR and restarts the container with zero downtime.
 
-### Automatic redeployment (optional)
+### Automatic redeployment via Watchtower
 
-To have the NAS redeploy automatically whenever a new image is published, add a Portainer stack webhook as a GitHub repository secret:
+The `docker-compose.yml` includes a **Watchtower** service that runs alongside the sync container on your NAS. Watchtower polls GHCR on a schedule and automatically pulls and restarts the container whenever a new image is published — no inbound network access or webhooks required.
 
-1. In Portainer: **Stacks → ibkr-mf-sync → Webhooks** → enable and copy the URL
-2. In GitHub: **Settings → Secrets and variables → Actions → New repository secret**
-   - Name: `PORTAINER_WEBHOOK_URL`
-   - Value: the URL from step 1
+By default it checks every 6 hours. Override with `WATCHTOWER_POLL_INTERVAL` (in seconds) in your `.env` file:
 
-The GitHub Actions workflow will call this webhook at the end of every successful image push.
+```ini
+WATCHTOWER_POLL_INTERVAL=3600  # check hourly
+```
+
+Watchtower is scoped to only manage containers that carry the `com.centurylinklabs.watchtower.enable=true` label, so it will not touch other containers running on your NAS.
+
+**Prerequisite — make the GHCR package public:**
+
+Watchtower needs to pull the image without credentials. Since the source repo is already public, the container image can be too:
+
+1. Go to `https://github.com/users/RetroHazard/packages/container/ibkr_mf_sync`
+2. Click **Package settings → Change visibility → Public**
+
+This only needs to be done once, the first time after the Actions workflow publishes the image.
 
 ---
 

@@ -4,6 +4,10 @@ services:
     container_name: ibkr-mf-sync
     restart: unless-stopped
 
+    labels:
+      # Opt this container into Watchtower auto-updates
+      - "com.centurylinklabs.watchtower.enable=true"
+
     environment:
       # --- MoneyForward credentials ---
       - MF_EMAIL=${MF_EMAIL}
@@ -39,6 +43,20 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower-ibkr
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      # Only watch containers that have the watchtower enable label
+      - WATCHTOWER_LABEL_ENABLE=true
+      # Remove old images after a successful update
+      - WATCHTOWER_CLEANUP=true
+      # How often to check for new images, in seconds (default: every 6 hours)
+      - WATCHTOWER_POLL_INTERVAL=${WATCHTOWER_POLL_INTERVAL:-21600}
 
 volumes:
   ibkr-session:
