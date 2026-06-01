@@ -30,3 +30,9 @@ build/
 .browser_session.json
 .cache/
 .context/
+
+# Local build artifacts
+*.tar
+*.tar.gz
+*.xml
+nul
