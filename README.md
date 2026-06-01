@@ -153,14 +153,21 @@ WATCHTOWER_POLL_INTERVAL=3600  # check hourly
 
 Watchtower is scoped to only manage containers that carry the `com.centurylinklabs.watchtower.enable=true` label, so it will not touch other containers running on your NAS.
 
-**Prerequisite — make the GHCR package public:**
+**Prerequisite — create a GitHub PAT:**
 
-Watchtower needs to pull the image without credentials. Since the source repo is already public, the container image can be too:
+The GHCR image is private. Watchtower (and Portainer on initial deploy) needs a Personal Access Token to pull it:
 
-1. Go to `https://github.com/users/RetroHazard/packages/container/ibkr_mf_sync`
-2. Click **Package settings → Change visibility → Public**
+1. Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**
+2. Create a token with **Repository permissions → Packages → Read-only**
+3. Add `GHCR_USERNAME` (your GitHub username) and `GHCR_TOKEN` (the token) to your `.env` file and Portainer stack environment variables
 
-This only needs to be done once, the first time after the Actions workflow publishes the image.
+**Portainer initial pull:**
+
+Portainer also needs credentials to pull the image when the stack is first deployed. Register GHCR as a registry in Portainer before deploying:
+
+1. In Portainer: **Registries → Add registry → GitHub Container Registry**
+2. Enter your GitHub username and the same PAT from above
+3. Save — Portainer will use these credentials for all `ghcr.io` image pulls
 
 ---
 
