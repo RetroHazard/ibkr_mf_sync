@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+# Export container environment to /etc/environment so cron jobs inherit it.
+# Cron runs with a stripped shell that doesn't inherit Docker env vars by default.
+printenv | grep -v "^_=" > /etc/environment
+
 CRON_SCHEDULE="${CRON_SCHEDULE:-0 6 * * *}"
 
 # Write crontab entry - pipe output to Docker's stdout so `docker logs` shows it
