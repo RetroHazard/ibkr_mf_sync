@@ -53,6 +53,8 @@ In Portainer, go to **Stacks → ibkr-mf-sync → Editor**, then click **Pull an
 
 The `docker-compose.yml` includes a **Watchtower** service that runs alongside the sync container on your NAS. Watchtower polls GHCR on a schedule and automatically pulls and restarts the container whenever a new image is published — no inbound network access or webhooks required.
 
+The image used is [`ghcr.io/nicholas-fedor/watchtower`](https://github.com/nicholas-fedor/watchtower), the maintained fork of the original `containrrr/watchtower`, which was archived in December 2025. It is a drop-in replacement: identical `com.centurylinklabs.watchtower.enable` label and identical `WATCHTOWER_*` settings. If you are upgrading from the old image, see [Troubleshooting](#troubleshooting).
+
 By default it checks every 6 hours. Override with `WATCHTOWER_POLL_INTERVAL` (in seconds) in your `.env` file:
 
 ```ini
@@ -259,6 +261,17 @@ Ensure you have a stable internet connection during `docker build`. The Chromium
 
 **NAS ARM architecture error**
 If you see `exec format error` or `no matching manifest`, your NAS CPU is ARM-based. Build the image on an ARM machine, or use `docker buildx build --platform linux/arm64 -t ibkr-mf-sync:latest .` and push to a local registry.
+
+**Watchtower fails with `client version 1.25 is too old`**
+Full error: `Error response from daemon: client version 1.25 is too old. Minimum supported API version is 1.40, please upgrade your client to a newer version`.
+
+The archived `containrrr/watchtower:1.7.1` image pins Docker API version 1.25, which current Docker daemons refuse. The stack now uses the maintained `ghcr.io/nicholas-fedor/watchtower` fork instead, which negotiates the API version with the daemon. If you are still running the old image, redeploy the stack in Portainer (**Stacks → ibkr-mf-sync → Editor → Update the stack**, with *Re-pull image* enabled) to pick up the new one.
+
+To confirm it is healthy afterwards:
+```bash
+docker logs watchtower-ibkr --tail 20
+```
+You should see a `Watching N containers` line and no `client version` errors.
 
 **IBKR Flex Token expired**
 The token has a 1-year validity. Regenerate it in your IBKR account portal (Flex Web Service settings) and update the `IBKR_FLEX_TOKEN` environment variable in Portainer.

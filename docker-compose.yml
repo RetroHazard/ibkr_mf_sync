@@ -45,7 +45,11 @@ services:
         max-file: "3"
 
   watchtower:
-    image: containrrr/watchtower:1.7.1
+    # Maintained fork of the (archived) containrrr/watchtower. Drop-in replacement:
+    # same com.centurylinklabs.watchtower.enable label and same WATCHTOWER_* settings.
+    # The upstream 1.7.1 image speaks Docker API 1.25, which modern daemons reject with
+    # "client version 1.25 is too old" — this fork negotiates the API version instead.
+    image: ghcr.io/nicholas-fedor/watchtower:1.21.0
     container_name: watchtower-ibkr
     restart: unless-stopped
     volumes:
